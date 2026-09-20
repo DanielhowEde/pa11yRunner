@@ -1,0 +1,6 @@
+target/
+scanner/node_modules/
+*.log
+.idea/
+*.iml
+.vscode/

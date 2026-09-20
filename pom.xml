@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.automation</groupId>
+    <artifactId>pa11y-runner</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>pa11y-runner</name>
+    <description>
+        Runs Pa11y against a web page in a Chrome that is already running elsewhere -- typically a
+        Selenium Grid node with a remote debugging port open -- and hands the results to a Java test
+        harness as plain objects.
+    </description>
+
+    <properties>
+        <!--
+            The one line to change when moving to a newer Java.
+
+            17 is the floor because the public API is built from records, and it is the oldest LTS
+            a test harness is likely to still be on. Nothing here uses a preview feature, an API
+            removed after 17, or anything needing an add-opens flag, so changing this value is the
+            whole migration. The only other requirement is that the build JDK is at least as new.
+
+                mvn -Djava.release=25 clean package
+
+            has been run against a Temurin 25 JDK: all tests pass and the shaded jar builds.
+
+            One trap, already dealt with: maven-shade-plugin reads every class with ASM, so a
+            shade older than its target Java fails with "Unsupported class file major version".
+            3.6.0 could not read Java 25 classes; 3.6.2, pinned below, reads both 17 and 25. If a
+            later Java ever reintroduces that error, bumping the shade version is the fix.
+        -->
+        <java.release>17</java.release>
+
+        <maven.compiler.release>${java.release}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <jackson.version>2.18.2</jackson.version>
+        <junit.version>5.11.4</junit.version>
+
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+        <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
+        <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
+    </properties>
+
+    <dependencies>
+        <!--
+            The only runtime dependency. It is relocated by the shade plugin below, because a test
+            harness is exactly the kind of classpath where a second Jackson turns into a support
+            ticket.
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>${project.basedir}/src/main/resources</directory>
+            </resource>
+            <!--
+                The scanner script lives next to its package.json and node_modules, where it can be
+                run and debugged by hand, and is copied into the jar from there. One copy, two
+                uses: the Java unpacks the jar's copy at runtime so the script can never drift from
+                the code that drives it.
+            -->
+            <resource>
+                <directory>${project.basedir}/scanner</directory>
+                <targetPath>com/automation/pa11y</targetPath>
+                <includes>
+                    <include>pa11y-cdp-scan.js</include>
+                </includes>
+            </resource>
+        </resources>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Xlint:all,-serial</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${maven-jar-plugin.version}</version>
+            </plugin>
+
+            <!--
+                Produces pa11y-runner-1.0.0-all.jar alongside the thin jar: self-contained, with
+                Jackson relocated, and runnable as the CLI. Use the thin jar as a normal Maven
+                dependency; use the -all jar for dropping into a libs/ directory or shelling out.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven-shade-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>all</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.fasterxml.jackson</pattern>
+                                    <shadedPattern>com.automation.pa11y.shaded.jackson</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.automation.pa11y.Pa11yCli</mainClass>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

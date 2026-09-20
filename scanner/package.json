@@ -1,0 +1,13 @@
+{
+  "name": "pa11y-cdp-scanner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runs Pa11y against a page in an already-running Chrome, reached over CDP.",
+  "main": "pa11y-cdp-scan.js",
+  "scripts": {
+    "scan": "node pa11y-cdp-scan.js"
+  },
+  "dependencies": {
+    "pa11y": "10.0.0"
+  }
+}
