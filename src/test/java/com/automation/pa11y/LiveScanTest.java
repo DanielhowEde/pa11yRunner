@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * End-to-end tests against a real Chrome and a real page.
@@ -41,6 +42,23 @@ class LiveScanTest {
 
 		assertNotNull(result.pageUrl());
 		assertFalse(result.documentTitle().isBlank(), "the scan should have reached a real page");
+		assertTrue(result.duration().toMillis() > 0);
+	}
+
+	@Test
+	@DisplayName("scans whatever page the browser already has open, without being told a URL")
+	void scansTheOpenPage() {
+		ScanResult result;
+		try {
+			result = runner().scanCurrentPage();
+		} catch (ScanFailedException e) {
+			// Nothing was open to scan, which is a fair state for a browser nobody has driven.
+			// The suite's own run will always have navigated first.
+			assumeTrue(e.kind() != FailureKind.NO_PAGE_OPEN, "no page is open in this browser");
+			throw e;
+		}
+
+		assertFalse(result.pageUrl().isBlank(), "the scan should report which page it measured");
 		assertTrue(result.duration().toMillis() > 0);
 	}
 

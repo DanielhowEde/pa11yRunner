@@ -70,7 +70,21 @@ public final class Pa11yRunner {
 	}
 
 	/**
-	 * Scans a page with the default options: WCAG2AA, HTML CodeSniffer, errors only.
+	 * Scans the page Chrome already has open, as it stands.
+	 *
+	 * <p>This is the one to call once the suite has navigated: nothing is reloaded, so the
+	 * page is measured in whatever state the test left it, and no URL has to be threaded
+	 * through. Defaults are WCAG2AA, HTML CodeSniffer, errors only.
+	 *
+	 * @return what was found
+	 * @throws ScanFailedException if the scan could not be run
+	 */
+	public ScanResult scanCurrentPage() {
+		return scan(ScanRequest.currentPage().build());
+	}
+
+	/**
+	 * Loads a URL in a new tab, scans it and closes the tab.
 	 *
 	 * @param url the page to scan
 	 * @return what was found
@@ -96,7 +110,7 @@ public final class Pa11yRunner {
 		if (!response.completed()) {
 			throw new ScanFailedException(
 					FailureKind.fromWireName(response.failureKind()),
-					request.url(),
+					request.target(),
 					response.message() == null ? "no detail given" : response.message());
 		}
 		return toResult(request, response);
@@ -121,7 +135,8 @@ public final class Pa11yRunner {
 					wire.runnerExtras()));
 		}
 		return new ScanResult(
-				request.url(),
+				// Scanning the open tab means the URL was not known until Chrome was asked.
+				request.scanCurrentPage() ? response.pageUrl() : request.url(),
 				response.pageUrl(),
 				response.documentTitle(),
 				Duration.ofMillis(response.durationMillis()),

@@ -91,7 +91,7 @@ public final class NodeScanner {
 		try {
 			process = builder.start();
 		} catch (IOException e) {
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.url(),
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
 					"Could not start '" + nodeExecutable + "'. Node "
 					+ "22.13+ or 24+ has to be installed and on the PATH of the process running the tests, "
 					+ "or named with the pa11y.node.executable system property.", e);
@@ -106,20 +106,20 @@ public final class NodeScanner {
 		} catch (InterruptedException e) {
 			process.destroyForcibly();
 			Thread.currentThread().interrupt();
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.url(),
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
 					"Interrupted while waiting for the scan.", e);
 		}
 
 		if (!finished) {
 			process.destroyForcibly();
-			throw new ScanFailedException(FailureKind.TIMEOUT, request.url(),
+			throw new ScanFailedException(FailureKind.TIMEOUT, request.target(),
 					"The scanner process did not finish within " + limit.toSeconds() + "s "
 					+ "(scan timeout " + request.timeout().toSeconds() + "s plus "
 					+ PROCESS_OVERHEAD.toSeconds() + "s of headroom).");
 		}
 
 		if (!Files.isRegularFile(resultFile)) {
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.url(),
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
 					"The scanner exited with code " + process.exitValue() + " and wrote no result."
 					+ diagnostics(outputFile));
 		}
@@ -152,7 +152,7 @@ public final class NodeScanner {
 		try {
 			return MAPPER.readValue(Files.readString(resultFile, StandardCharsets.UTF_8), ScanResponse.class);
 		} catch (IOException e) {
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.url(),
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
 					"The scanner's result file could not be read." + diagnostics(outputFile), e);
 		}
 	}
@@ -167,7 +167,10 @@ public final class NodeScanner {
 	 */
 	private Map<String, Object> buildRequest(ScanRequest request, String webSocketUrl, Path resultFile) {
 		Map<String, Object> payload = new LinkedHashMap<>();
-		payload.put("url", request.url());
+		payload.put("scanCurrentPage", request.scanCurrentPage());
+		if (request.url() != null) {
+			payload.put("url", request.url());
+		}
 		payload.put("browserWSEndpoint", webSocketUrl);
 		payload.put("outputFile", resultFile.toAbsolutePath().toString());
 		payload.put("modulesDir", modulesDir.toAbsolutePath().toString());
@@ -245,7 +248,7 @@ public final class NodeScanner {
 			file.toFile().deleteOnExit();
 			return file;
 		} catch (IOException e) {
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.url(),
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
 					"Could not create a temporary file for the scan.", e);
 		}
 	}

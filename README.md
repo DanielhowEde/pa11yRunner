@@ -1,31 +1,119 @@
 # pa11y-runner
 
 Runs [Pa11y](https://pa11y.org/) against a web page **in the Chrome your Selenium Grid is already
-driving**, and hands the results to a Java test harness as plain objects.
+driving**, then consolidates a run's worth of pages into one HTML report.
 
 Pa11y is Node software and there is no Java binding, so this is a small Java library over a small
-Node script. What makes it different from the usual wrapper is that it never launches a browser.
-It attaches to the one on the Grid node over CDP:
+Node script. What makes it different from the usual wrapper is that it never launches a browser. It
+attaches to the one on the Grid node over CDP and scans the tab your test is already on:
 
 ```
-Java test harness (wherever your tests run)        Selenium Grid node
- |                                                  |
- |-- Selenium drives the app ---------------------> Chrome
- |                                                   |  tab 1: the page under test
- |                                                   |
- '-- pa11y.scan(url)                                 |
-       '-- node pa11y-cdp-scan.js --- CDP :9222 -----'
-             Puppeteer attaches, Pa11y scans in
-             tab 2, then closes tab 2 and disconnects
+Your test harness                             Selenium Grid node
+ |                                             |
+ |-- Selenium navigates to the page ---------> Chrome
+ |                                              |  the page under test
+ '-- pa11y-runner scan --name checkout          |
+       '-- node scanner --- CDP :9222 ----------'
+             attaches, scans the open tab in place, hands it back
 ```
 
 Three things follow from that, and they are the whole reason for this design:
 
+- **Nothing is reloaded.** The page is measured in the state your test left it, so an app that has
+  been clicked into a particular state is scanned in that state.
+- **The scan is signed in.** It is the same browser, so the session your test established is simply
+  there. No second login, no cookie replay.
 - **No second browser.** Nothing has to install Chromium next to your tests.
-- **The scan is signed in.** The new tab shares the Grid browser's profile, so the cookies your
-  test established are already there. No second login, no session replay.
-- **Your test's tab is untouched.** Pa11y opens its own tab and closes it again, and the runner
-  disconnects rather than closing the browser. The WebDriver session survives the scan.
+
+---
+
+## The run
+
+Three commands, matching the three moments in a suite:
+
+```bash
+# once, before the suite starts
+java -jar pa11y-runner-1.0.0-all.jar clean
+
+# from your test, each time it has navigated to a page worth checking
+java -jar pa11y-runner-1.0.0-all.jar scan --chrome grid-node-3:9222 --name checkout
+
+# once, after the suite finishes
+java -jar pa11y-runner-1.0.0-all.jar report --out accessibility-report.html
+```
+
+`scan` needs no URL. Your test has already navigated, so the scanner finds the open page itself and
+measures that. Pass `--url` only if you want it to load something else in a separate tab instead.
+
+From Java, that middle command is:
+
+```java
+new ProcessBuilder(
+        "java", "-jar", "pa11y-runner-1.0.0-all.jar", "scan",
+        "--chrome", gridNodeHost + ":9222",
+        "--name", "checkout")
+    .inheritIO()
+    .start()
+    .waitFor();
+```
+
+Settings can come from the environment instead, which is usually tidier when every test needs them:
+
+```bash
+PA11Y_CHROME_URL=http://grid-node-3:9222
+PA11Y_REPORTS_DIR=target/pa11y-reports
+PA11Y_SCANNER_DIR=/opt/pa11y/scanner
+```
+
+With those set, the scan is just `... scan --name checkout`.
+
+### What each command does
+
+| Command | What it does |
+|---|---|
+| `clean` | Empties the reports directory. Only removes files this tool wrote — a stray config or fixture in the same folder is left alone unless you pass `--all`. |
+| `scan` | Scans the open page and saves it as `<name>.json`. Rescanning the same name replaces the earlier result rather than doubling it. |
+| `report` | Reads every saved page and writes one self-contained HTML file. |
+
+`pa11y-runner help <command>` explains any of them in full.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | the command did what was asked |
+| `1`  | errors were found, **and** you passed `--fail-on-error` |
+| `2`  | the arguments were wrong |
+| `3`  | the command could not be carried out |
+
+A scan that ran exits `0` whatever it found. At scan time the question is whether the scan worked,
+not whether the page is perfect — otherwise every page with a known issue would fail your build
+step halfway through the suite. Add `--fail-on-error` to `scan` or `report` when you do want
+findings to fail something.
+
+`report` exits `3` when there are no saved pages to combine, because that means the scans did not
+run rather than that the site is clean.
+
+---
+
+## What the consolidated report shows
+
+The totals are the least interesting part. The report's job is to split the findings in two:
+
+- **Shared across pages** — rules that failed on more than one page. Twenty pages reporting the
+  same unlabelled search box is one defect in a shared header, not twenty. These come first, most
+  widespread first, because the top of that list is where one fix clears the most findings.
+- **Specific to one page** — rules that failed on exactly one page, which are that page's own.
+
+Two findings count as the same problem when they share a **rule code**. Matching on the CSS
+selector too would be stricter, but selectors differ between pages almost by definition and
+everything would come out unique.
+
+Each rule shows which pages it fired on, how many times on each, the offending elements, and an
+example of the markup. The file is self-contained — no stylesheet, script or font is fetched from
+anywhere — so it can be attached to a build, emailed, or opened from a share years later.
+
+A run of one page says so plainly rather than pretending it found nothing shared.
 
 ---
 
@@ -42,8 +130,8 @@ Node **22.13+ or 24+** is required there (Pa11y 10's own floor). Note this is th
 not the Grid node — the Grid node only needs Chrome.
 
 That install takes a few seconds and downloads **no browser**. `scanner/.puppeteerrc.cjs` turns off
-Puppeteer's bundled Chromium, which is a ~700MB download that nothing here would ever launch —
-the browser is always the remote one.
+Puppeteer's bundled Chromium, which is a ~700MB download that nothing here would ever launch — the
+browser is always the remote one.
 
 **2. Build:**
 
@@ -51,128 +139,10 @@ the browser is always the remote one.
 mvn clean package
 ```
 
-That produces `target/pa11y-runner-1.0.0.jar` (a normal dependency) and
-`target/pa11y-runner-1.0.0-all.jar` (self-contained, Jackson relocated, runnable as a CLI).
+That produces `target/pa11y-runner-1.0.0-all.jar` (self-contained, Jackson relocated, runnable as
+the CLI) and `target/pa11y-runner-1.0.0.jar` (a normal Maven dependency).
 
-**3. Depend on it:**
-
-```xml
-<dependency>
-    <groupId>com.automation</groupId>
-    <artifactId>pa11y-runner</artifactId>
-    <version>1.0.0</version>
-    <scope>test</scope>
-</dependency>
-```
-
-**4. Open Chrome's debugger on the Grid node** — see [Setting up Chrome](#setting-up-chrome).
-
----
-
-## Using it from a test
-
-```java
-// once, in a base class or @BeforeAll
-Pa11yRunner pa11y = Pa11yRunner.builder()
-        .chromeDebuggerUrl("http://grid-node-3:9222")
-        .build();
-
-// in a test, once the page under test is on screen
-ScanResult result = pa11y.scan(driver.getCurrentUrl());
-assertTrue(result.errors().isEmpty(), result::describeErrors);
-```
-
-`describeErrors()` is built for exactly that assertion message:
-
-```
-3 accessibility error(s) on https://example.com/checkout
-  - [ERROR] Img element missing an alt attribute. (WCAG2AA...H37) at #basket > img
-  - [ERROR] This form field should be labelled in some way. (WCAG2AA...F68) at #promo-code
-  - [ERROR] Anchor element found with a valid href attribute, but no link content has been supplied. (WCAG2AA...NoContent) at footer > a:nth-child(3)
-```
-
-Configuration can also come from the environment, which is usually easier in CI:
-
-```bash
-PA11Y_CHROME_URL=http://grid-node-3:9222     # or -Dpa11y.chrome.url=...
-PA11Y_SCANNER_DIR=/opt/pa11y/scanner         # or -Dpa11y.scanner.dir=...
-```
-
-With `PA11Y_CHROME_URL` set, `Pa11yRunner.builder().build()` needs nothing else.
-
-### Scan options
-
-```java
-ScanResult result = pa11y.scan(ScanRequest.forUrl(url)
-        .standard(Standard.WCAG2AA)                 // WCAG2A / WCAG2AA (default) / WCAG2AAA
-        .engines(ScanEngine.HTMLCS, ScanEngine.AXE) // htmlcs by default; both merges the findings
-        .includeWarnings(true)                      // errors only by default
-        .waitAfterLoad(Duration.ofMillis(500))      // for content rendered after load
-        .rootElement("#main")                       // ignore the shared header's known problems
-        .hideElements(".third-party-widget")
-        .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
-        .header("X-Environment", "staging")
-        .timeout(Duration.ofSeconds(90))
-        .viewport(375, 812)                         // scan the mobile layout
-        .actions("click element #cookie-accept")    // Pa11y actions, run before the scan
-        .build());
-```
-
-Define the policy once and point it at each page, so every screen is judged by the same rules:
-
-```java
-private static final ScanRequest POLICY = ScanRequest.forUrl("about:blank")
-        .engines(ScanEngine.HTMLCS, ScanEngine.AXE)
-        .rootElement("#main")
-        .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
-        .build();
-
-ScanResult result = pa11y.scan(POLICY.toBuilder(driver.getCurrentUrl()).build());
-```
-
-### Reading the results
-
-```java
-result.errors();          // List<Issue> -- definite failures
-result.warnings();        // empty unless includeWarnings(true)
-result.hasErrors();
-result.countsByCode();    // rule -> count, most frequent first
-result.duration();
-result.pageUrl();         // after redirects; not necessarily what you asked for
-
-for (Issue issue : result.errors()) {
-    issue.selector();     // a CSS selector -- usable with By.cssSelector to go look at it
-    issue.context();      // the offending HTML
-    issue.engine();       // "htmlcs" or "axe"
-}
-```
-
----
-
-## Failure is not the same as violations
-
-A page with 200 errors produced a **successful scan**. A scanner that could not reach the page
-produced **no scan at all**. Those are not the same result and the library refuses to blur them:
-
-- a scan that ran returns a `ScanResult`, however bad the page is
-- a scan that could not run throws `ScanFailedException`
-
-This matters more than it sounds. If an unreachable browser quietly returned an empty result, every
-Grid outage would look like a page with no accessibility problems, and the build would go green.
-
-```java
-try {
-    ScanResult result = pa11y.scan(url);
-    assertTrue(result.errors().isEmpty(), result::describeErrors);
-} catch (ScanFailedException e) {
-    // e.kind() is CHROME_UNREACHABLE, NAVIGATION_FAILED, TIMEOUT,
-    // SCANNER_NOT_INSTALLED, SCANNER_PROCESS_FAILED or SCAN_ERROR
-    throw e;   // an infrastructure problem, not an accessibility one
-}
-```
-
-Both exceptions are unchecked, so the default behaviour is a loud failure at the call site rather
-than a `try/catch` that ends up swallowing the problem.
+**3. Open Chrome's debugger on the Grid node** — see [Setting up Chrome](#setting-up-chrome).
 
 ---
 
@@ -211,53 +181,112 @@ the Grid router proxies to the right browser, so no fixed port is involved:
 
 ```java
 String cdp = String.valueOf(((RemoteWebDriver) driver).getCapabilities().getCapability("se:cdp"));
-
-Pa11yRunner pa11y = Pa11yRunner.builder()
-        .chromeDebuggerUrl(cdp)   // a ws:// URL is passed straight through
-        .build();
+// pass that to --chrome; a ws:// URL is used as-is
 ```
 
-`chromeDebuggerUrl` takes `ws://`/`wss://` URLs untouched, so this needs no change to the library.
-Worth knowing: the direct `:9222` route is what has been tested end to end here, including from a
-different machine. The `se:cdp` route is supported by the same code path but is worth a one-off
-check against your own Grid before relying on it, since Grid's proxying differs by version and
-`se:cdp` is absent when `--enable-managed-downloads` or certain Grid configurations are in play.
+`--chrome` takes `ws://`/`wss://` URLs untouched, so this needs no change to the tool. Worth
+knowing: the direct `:9222` route is what has been tested end to end here, including from a
+different machine. The `se:cdp` route uses the same code path but is worth a one-off check against
+your own Grid, since Grid's proxying differs by version and `se:cdp` is absent under some Grid
+configurations.
 
-### What "the same session" does and does not give you
+### What the scan does to the tab it borrows
 
-The scan opens a **new tab in the same browser**, so anything held in the browser profile comes
-with it: cookies, and `localStorage` for the same origin. That covers ordinary authentication.
+Pa11y sets the viewport and user agent through CDP, and those are *overrides* that outlive the
+scan. Since the tab belongs to your WebDriver session and your test carries on using it, the
+scanner hands it back as it found it: the emulation overrides are cleared and the injected runner
+is removed. It reads the tab's existing size and user agent first and passes those to Pa11y, so
+there is no moment where your test's window is a different shape.
 
-It does **not** carry in-memory state. The new tab loads the URL from scratch, so a single-page app
-that has built up state through clicking will be scanned in its freshly-loaded condition, not its
-current one. If that distinction matters for a screen, drive it there with `actions(...)` or scan a
-URL that reconstructs the state.
+If you would rather nothing touched the tab at all, pass `--url` and the scan happens in a separate
+tab that is opened and closed around it.
 
 ---
 
-## Command line
+## Using it as a library
 
-For a harness that would rather run a process than take the jar on its classpath:
+If you would rather call it in-process than shell out:
 
-```bash
-java -jar pa11y-runner-1.0.0-all.jar \
-  --url https://example.com/checkout \
-  --chrome http://grid-node-3:9222 \
-  --scanner-dir /opt/pa11y/scanner \
-  --include-warnings \
-  --out result.json
+```xml
+<dependency>
+    <groupId>com.automation</groupId>
+    <artifactId>pa11y-runner</artifactId>
+    <version>1.0.0</version>
+    <scope>test</scope>
+</dependency>
 ```
 
-The exit code carries the outcome, so nothing has to be parsed to act on it:
+```java
+// once, in a base class or @BeforeAll
+Pa11yRunner pa11y = Pa11yRunner.builder()
+        .chromeDebuggerUrl("http://grid-node-3:9222")
+        .build();
 
-| Code | Meaning |
-|------|---------|
-| `0`  | the scan ran and found no errors |
-| `1`  | the scan ran and found errors |
-| `2`  | the arguments were wrong |
-| `3`  | the scan could not be run at all |
+// in a test, once it has navigated
+ScanResult result = pa11y.scanCurrentPage();
+assertTrue(result.errors().isEmpty(), result::describeErrors);
+```
 
-`--help` lists every option.
+`describeErrors()` is built for exactly that assertion message:
+
+```
+3 accessibility error(s) on https://example.com/checkout
+  - [ERROR] Img element missing an alt attribute. (WCAG2AA...H37) at #basket > img
+  - [ERROR] This form field should be labelled in some way. (WCAG2AA...F68) at #promo-code
+  - [ERROR] Anchor element found with a valid href attribute, but no link content has been supplied. (WCAG2AA...NoContent) at footer > a:nth-child(3)
+```
+
+To save a page for the combined report from Java rather than through the CLI:
+
+```java
+new ReportStore(Path.of("target/pa11y-reports")).write(PageReport.of("checkout", request, result));
+```
+
+### Scan options
+
+Available on both the CLI and the builder:
+
+```java
+ScanResult result = pa11y.scan(ScanRequest.currentPage()
+        .standard(Standard.WCAG2AA)                 // WCAG2A / WCAG2AA (default) / WCAG2AAA
+        .engines(ScanEngine.HTMLCS, ScanEngine.AXE) // htmlcs by default; both merges the findings
+        .includeWarnings(true)                      // errors only by default
+        .waitAfterLoad(Duration.ofMillis(500))      // for content rendered late
+        .rootElement("#main")                       // ignore the shared header's known problems
+        .hideElements(".third-party-widget")
+        .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
+        .timeout(Duration.ofSeconds(90))
+        .actions("click element #cookie-accept")    // Pa11y actions, run before the scan
+        .build());
+```
+
+Define the policy once and point it at each page so every screen is judged by the same rules:
+
+```java
+private static final ScanRequest POLICY = ScanRequest.currentPage()
+        .engines(ScanEngine.HTMLCS, ScanEngine.AXE)
+        .rootElement("#main")
+        .build();
+
+pa11y.scan(POLICY.toBuilder("https://example.com/basket").build());  // same policy, a given URL
+```
+
+---
+
+## Failure is not the same as violations
+
+A page with 200 errors produced a **successful scan**. A scanner that could not reach the page
+produced **no scan at all**. Those are not the same result and the tool refuses to blur them:
+
+- a scan that ran returns a `ScanResult`, however bad the page is
+- a scan that could not run throws `ScanFailedException`, and the CLI exits `3`
+
+This matters more than it sounds. If an unreachable browser quietly returned an empty result, every
+Grid outage would look like a page with no accessibility problems, and the build would go green.
+
+`ScanFailedException.kind()` says which it was: `CHROME_UNREACHABLE`, `NAVIGATION_FAILED`,
+`TIMEOUT`, `NO_PAGE_OPEN`, `AMBIGUOUS_PAGE`, `SCANNER_NOT_INSTALLED`, `SCANNER_PROCESS_FAILED` or
+`SCAN_ERROR`.
 
 ---
 
@@ -277,8 +306,7 @@ JDK compiles to class file version 69, passes all tests and builds the shaded ja
 
 One trap, already dealt with: `maven-shade-plugin` reads every class with ASM, so a shade older
 than its target Java fails with `Unsupported class file major version`. 3.6.0 could not read Java
-25 classes; the pinned 3.6.2 reads both. If a future Java brings that error back, bumping the shade
-version is the fix.
+25 classes; the pinned 3.6.2 reads both.
 
 ---
 
@@ -305,8 +333,8 @@ PA11Y_TEST_URL=https://example.com \
   mvn test -Dtest=LiveScanTest
 ```
 
-Worth running once against the Grid node itself. The failure modes this library exists to handle
-only appear when the browser is on a different machine from the tests.
+Worth running once against the Grid node itself. The failure modes this tool exists to handle only
+appear when the browser is on a different machine from the tests.
 
 ---
 
@@ -318,11 +346,18 @@ Nothing is listening, or the port is firewalled. Check from the test machine:
 
 **HTTP 403 from `/json/version`**
 Chrome's DNS-rebinding guard: it refuses any request whose `Host` header is neither `localhost` nor
-a bare IP. The library already resolves hostnames to IPs to avoid this, so a 403 usually means
+a bare IP. The tool already resolves hostnames to IPs to avoid this, so a 403 usually means
 something in between — a proxy or ingress — is rewriting the `Host` header.
 
 **The WebSocket connection is rejected although `/json/version` works**
 Chrome 111+ needs `--remote-allow-origins=*`.
+
+**`NO_PAGE_OPEN`**
+Nothing was open to scan. The test should navigate before asking for a scan, or pass `--url`.
+
+**`AMBIGUOUS_PAGE`**
+Several tabs are open and none is clearly the active one, so the scanner will not guess which one
+you meant. Pass `--url`.
 
 **`Could not find an installed Pa11y scanner`**
 `npm ci` has not been run in `scanner/`, or it was run somewhere the tests cannot see. The message
@@ -334,18 +369,17 @@ Pa11y.
 Node 22.13+ or 24+ has to be on the PATH of the process running the tests. Name it explicitly with
 `-Dpa11y.node.executable=/usr/local/bin/node` if it is somewhere unusual.
 
-**The scan reports a login page**
-The tab is new but the profile is shared, so this normally means the session is cookie-less — an
-`Authorization` header rather than a cookie, for instance. Pass it with `.header(...)`.
+**`report` says there is nothing to combine**
+The scans wrote somewhere else. `scan` and `report` have to agree on `--reports-dir`; setting
+`PA11Y_REPORTS_DIR` once for the whole run is the reliable way.
 
-**Every scan finds the same twenty issues**
-They are probably in a shared header or footer. Narrow the scan with `.rootElement("#main")`, or
-drop the specific rules with `.ignore(...)`.
+**Every page reports the same twenty issues**
+That is the report doing its job — look at "Shared across pages". They are probably in a header or
+footer. Narrow the scans with `--root-element "#main"`, or drop specific rules with `--ignore`.
 
 **Seeing what the scanner saw**
-`.debug(true)` on the builder, or `-Dpa11y.debug=true`, makes the scanner log its progress; the log
-is attached to the exception when a scan fails. `.screenCapture(Path.of("scan.png"))` saves a
-screenshot of the page as it was scanned.
+`--debug` makes the scanner log its progress; the log is attached to the error when a scan fails.
+`--screenshot page.png` saves the page as it was scanned.
 
 ---
 
@@ -353,18 +387,23 @@ screenshot of the page as it was scanned.
 
 | | |
 |---|---|
+| `Pa11yCli` | the three subcommands |
 | `Pa11yRunner` | the entry point; resolves the debugger URL and runs a scan |
-| `ScanRequest` | one page and the options to scan it with |
+| `ScanRequest` | what to scan and how — the open tab, or a URL |
 | `ScanResult` / `Issue` | what a completed scan found |
 | `ScanFailedException` | a scan that did not run, with a `FailureKind` |
+| `report/ReportStore` | reads and writes the per-page JSON |
+| `report/CombinedReport` | works out what is shared and what is not |
+| `report/HtmlReport` | renders it |
 | `internal/ChromeEndpoint` | turns `host:9222` into a usable WebSocket URL |
 | `internal/NodeScanner` | runs the Node process and reads back its result |
-| `internal/ScannerLocation` | finds the installed `node_modules` |
 | `scanner/pa11y-cdp-scan.js` | attaches to Chrome and runs Pa11y |
 
-Two details in there are deliberate and easy to undo by accident:
+Three details are deliberate and easy to undo by accident:
 
 - The scanner script is **shipped inside the jar** and unpacked at runtime, so it can never drift
   from the Java that drives it. `scanner/` is only needed for `node_modules`.
-- The result comes back **in a file, not on stdout**. Puppeteer and Pa11y's runners are entitled to
-  print whatever they like, and a parser reading stdout breaks the first time one of them does.
+- The result comes back from Node **in a file, not on stdout**. Puppeteer and Pa11y's runners are
+  entitled to print whatever they like, and a parser reading stdout breaks the first time one does.
+- One JSON file **per page**, not one shared file appended to. Parallel tests cannot corrupt each
+  other's output, and a crashed run still leaves the pages that did finish.

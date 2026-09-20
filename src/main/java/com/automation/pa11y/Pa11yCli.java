@@ -1,50 +1,52 @@
 package com.automation.pa11y;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.automation.pa11y.cli.CleanCommand;
+import com.automation.pa11y.cli.CommandLine;
+import com.automation.pa11y.cli.ReportCommand;
+import com.automation.pa11y.cli.ScanCommand;
 
-import java.io.IOException;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
- * Command line entry point, for harnesses that would rather run a process than take the jar
- * on their classpath.
+ * Command line entry point, for a harness that drives this as a process rather than on its
+ * classpath.
  *
- * <p>The exit code carries the outcome, so a shell or a build step can act on it without
- * parsing anything:
+ * <p>Three subcommands, matching the three moments in a run:
  *
- * <ul>
- * <li>{@code 0} -- the scan ran and found no errors</li>
- * <li>{@code 1} -- the scan ran and found errors</li>
- * <li>{@code 2} -- the arguments were wrong</li>
- * <li>{@code 3} -- the scan could not be run at all</li>
- * </ul>
+ * <pre>
+ * pa11y-runner clean                          once, before the suite starts
+ * pa11y-runner scan   --name checkout ...     after each page the suite navigates to
+ * pa11y-runner report --out report.html       once, after the suite finishes
+ * </pre>
  *
- * <p>That last distinction is the point of having separate codes: a broken scanner must not
- * look like a clean page.
+ * <p>The exit code carries the outcome, so nothing has to be parsed to act on it. Note that a
+ * scan which ran exits {@code 0} whatever it found: at scan time the question is whether the
+ * scan worked, not whether the page is perfect. Pass {@code --fail-on-error} to the scan or
+ * report step to turn findings into a non-zero exit.
  */
 public final class Pa11yCli {
 
-	/** The scan ran and found no errors. */
+	/** The command did what was asked. */
 	public static final int EXIT_CLEAN = 0;
 
-	/** The scan ran and found errors. */
+	/** Errors were found, and {@code --fail-on-error} was given. */
 	public static final int EXIT_ERRORS_FOUND = 1;
 
 	/** The arguments were wrong. */
 	public static final int EXIT_USAGE = 2;
 
-	/** The scan could not be run. */
+	/** The command could not be carried out. */
 	public static final int EXIT_SCAN_FAILED = 3;
 
-	private static final ObjectMapper MAPPER = new ObjectMapper();
+	/** Where reports go when nothing says otherwise. */
+	public static final String DEFAULT_REPORTS_DIR = "pa11y-reports";
+
+	/** Environment variable naming the reports directory. */
+	public static final String REPORTS_DIR_ENV = "PA11Y_REPORTS_DIR";
+
+	/** System property naming the reports directory. */
+	public static final String REPORTS_DIR_PROPERTY = "pa11y.reports.dir";
 
 	private Pa11yCli() {
 	}
@@ -59,310 +61,112 @@ public final class Pa11yCli {
 	/**
 	 * The CLI without the {@code System.exit}, so it can be tested.
 	 *
-	 * @param args   the command line
-	 * @param out    where the JSON result goes
-	 * @param err    where progress and errors go
+	 * @param args the command line
+	 * @param out  where results go
+	 * @param err  where progress and errors go
 	 * @return the exit code
 	 */
 	public static int run(String[] args, PrintStream out, PrintStream err) {
-		Arguments arguments;
-		try {
-			arguments = Arguments.parse(args);
-		} catch (IllegalArgumentException e) {
-			err.println(e.getMessage());
-			err.println();
+		if (args.length == 0) {
 			err.println(usage());
 			return EXIT_USAGE;
 		}
 
-		if (arguments.help) {
-			out.println(usage());
-			return EXIT_CLEAN;
-		}
-
-		Pa11yRunner runner;
-		try {
-			Pa11yRunner.Builder builder = Pa11yRunner.builder().debug(arguments.debug);
-			if (arguments.chromeUrl != null) {
-				builder.chromeDebuggerUrl(arguments.chromeUrl);
-			}
-			if (arguments.scannerDir != null) {
-				builder.scannerDirectory(arguments.scannerDir);
-			}
-			runner = builder.build();
-		} catch (Pa11yException e) {
-			err.println(e.getMessage());
-			return EXIT_SCAN_FAILED;
-		}
-
-		ScanResult result;
-		try {
-			result = runner.scan(arguments.toRequest());
-		} catch (Pa11yException e) {
-			err.println(e.getMessage());
-			return EXIT_SCAN_FAILED;
-		}
-
-		String json = toJson(result);
-		if (arguments.outputFile != null) {
-			try {
-				Files.writeString(arguments.outputFile, json, StandardCharsets.UTF_8);
-				err.println("Wrote " + arguments.outputFile.toAbsolutePath());
-			} catch (IOException e) {
-				err.println("Could not write " + arguments.outputFile + ": " + e.getMessage());
-				return EXIT_SCAN_FAILED;
-			}
-		} else {
-			out.println(json);
-		}
-
-		err.printf("%s -- %d error(s), %d warning(s), %d notice(s) in %dms%n",
-				result.pageUrl(),
-				result.errors().size(),
-				result.warnings().size(),
-				result.notices().size(),
-				result.duration().toMillis());
-
-		return result.hasErrors() ? EXIT_ERRORS_FOUND : EXIT_CLEAN;
+		return switch (args[0]) {
+			case "scan" -> ScanCommand.run(args, out, err);
+			case "clean", "cleardown" -> CleanCommand.run(args, out, err);
+			case "report" -> ReportCommand.run(args, out, err);
+			case "help", "--help", "-h" -> help(args, out);
+			default -> unknown(args[0], err);
+		};
 	}
 
 	/**
-	 * Renders the result as JSON. Built by hand rather than by reflecting over the record,
-	 * so that the on-disk shape stays put even if the record is refactored.
+	 * Works out where the per-page files live.
 	 *
-	 * @param result what was found
-	 * @return the JSON
+	 * @param command the parsed command line
+	 * @return the reports directory
 	 */
-	private static String toJson(ScanResult result) {
-		Map<String, Object> document = new LinkedHashMap<>();
-		document.put("requestedUrl", result.requestedUrl());
-		document.put("pageUrl", result.pageUrl());
-		document.put("documentTitle", result.documentTitle());
-		document.put("durationMillis", result.duration().toMillis());
-		document.put("errorCount", result.errors().size());
-		document.put("warningCount", result.warnings().size());
-		document.put("noticeCount", result.notices().size());
-
-		List<Map<String, Object>> issues = new ArrayList<>();
-		for (Issue issue : result.issues()) {
-			Map<String, Object> entry = new LinkedHashMap<>();
-			entry.put("code", issue.code());
-			entry.put("type", issue.type().wireName());
-			entry.put("message", issue.message());
-			entry.put("selector", issue.selector());
-			entry.put("context", issue.context());
-			entry.put("engine", issue.engine());
-			issues.add(entry);
+	public static Path reportsDirectory(CommandLine command) {
+		String configured = command.value("--reports-dir", null);
+		if (configured == null || configured.isBlank()) {
+			configured = System.getProperty(REPORTS_DIR_PROPERTY);
 		}
-		document.put("issues", issues);
-
-		try {
-			return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(document);
-		} catch (IOException e) {
-			throw new Pa11yException("Could not render the result as JSON.", e);
+		if (configured == null || configured.isBlank()) {
+			configured = System.getenv(REPORTS_DIR_ENV);
 		}
+		if (configured == null || configured.isBlank()) {
+			configured = DEFAULT_REPORTS_DIR;
+		}
+		return Path.of(configured);
 	}
 
 	/**
-	 * @return the help text
+	 * @param args the command line, where a subcommand may follow {@code help}
+	 * @param out  where the help goes
+	 * @return the exit code
 	 */
-	private static String usage() {
+	private static int help(String[] args, PrintStream out) {
+		String topic = args.length > 1 ? args[1] : "";
+		out.println(switch (topic) {
+			case "scan" -> ScanCommand.usage();
+			case "clean", "cleardown" -> CleanCommand.usage();
+			case "report" -> ReportCommand.usage();
+			default -> usage();
+		});
+		return EXIT_CLEAN;
+	}
+
+	/**
+	 * @param command what was typed
+	 * @param err     where the complaint goes
+	 * @return the exit code
+	 */
+	private static int unknown(String command, PrintStream err) {
+		err.println("Unknown command: " + command);
+		err.println();
+		err.println(usage());
+		return EXIT_USAGE;
+	}
+
+	/**
+	 * @return the top-level help text
+	 */
+	public static String usage() {
 		return """
-				Runs Pa11y against a page in an already-running Chrome, reached over CDP.
+				pa11y-runner -- accessibility scanning for a Selenium Grid suite
 
-				Usage:
-				  pa11y-runner --url <url> [--chrome <endpoint>] [options]
+				Runs Pa11y inside the Chrome your Grid is already driving, so the scan sees the page
+				your test navigated to, signed in and in the state the test left it.
 
-				Required:
-				  --url <url>              The page to scan.
+				Commands:
+				  clean     Empty the reports directory. Run once, before the suite starts.
+				  scan      Scan the page Chrome has open and save it. Run after each page.
+				  report    Combine the saved pages into one HTML report. Run once, at the end.
 
-				Connection:
-				  --chrome <endpoint>      Chrome's debugger: http://grid-node-3:9222, grid-node-3:9222,
-				                           or a ws:// URL. Defaults to the pa11y.chrome.url system
-				                           property or the PA11Y_CHROME_URL environment variable.
-				  --scanner-dir <path>     Directory holding the scanner's node_modules. Defaults to
-				                           the PA11Y_SCANNER_DIR environment variable, else a search
-				                           for a 'scanner' directory from the working directory up.
+				A typical run:
 
-				Scan options:
-				  --standard <name>        WCAG2A, WCAG2AA (default) or WCAG2AAA.
-				  --engine <name>          htmlcs (default) or axe. Repeatable.
-				  --include-warnings       Report warnings as well as errors.
-				  --include-notices        Report notices as well as errors.
-				  --timeout <seconds>      Scan timeout. Default 60.
-				  --wait <millis>          Wait this long after load before scanning. Default 0.
-				  --viewport <WxH>         Viewport size. Default 1280x1024.
-				  --root-element <css>     Scan only this part of the page.
-				  --hide-elements <css>    Exclude these elements.
-				  --ignore <code>          Drop issues with this code or type. Repeatable.
-				  --header <name:value>    Extra request header. Repeatable.
-				  --action <action>        A Pa11y action to run first, e.g. "click element #accept".
-				                           Repeatable.
+				  pa11y-runner clean --reports-dir pa11y-reports
 
-				Output:
-				  --out <path>             Write the JSON result here instead of to stdout.
-				  --debug                  Log what the scanner is doing.
-				  --help                   Show this text.
+				  # from your test, once it has navigated:
+				  pa11y-runner scan --chrome grid-node-3:9222 --name checkout \\
+				                    --reports-dir pa11y-reports
+
+				  pa11y-runner report --reports-dir pa11y-reports --out accessibility-report.html
+
+				Settings can come from the environment instead of the command line, which is usually
+				easier in CI:
+
+				  PA11Y_CHROME_URL       Chrome's debugger, e.g. http://grid-node-3:9222
+				  PA11Y_REPORTS_DIR      Where the per-page files go
+				  PA11Y_SCANNER_DIR      Directory holding the scanner's node_modules
 
 				Exit codes:
-				  0  scan ran, no errors      2  bad arguments
-				  1  scan ran, errors found   3  scan could not run""";
-	}
+				  0  the command did what was asked
+				  1  errors were found, and --fail-on-error was given
+				  2  the arguments were wrong
+				  3  the command could not be carried out
 
-	/** The parsed command line. */
-	private static final class Arguments {
-
-		private String url;
-		private String chromeUrl;
-		private Path scannerDir;
-		private Standard standard = Standard.WCAG2AA;
-		private final List<ScanEngine> engines = new ArrayList<>();
-		private boolean includeWarnings;
-		private boolean includeNotices;
-		private Duration timeout = ScanRequest.DEFAULT_TIMEOUT;
-		private Duration wait = Duration.ZERO;
-		private int viewportWidth = 1280;
-		private int viewportHeight = 1024;
-		private String rootElement;
-		private String hideElements;
-		private final List<String> ignore = new ArrayList<>();
-		private final Map<String, String> headers = new LinkedHashMap<>();
-		private final List<String> actions = new ArrayList<>();
-		private Path outputFile;
-		private boolean debug;
-		private boolean help;
-
-		/**
-		 * @param args the command line
-		 * @return the parsed arguments
-		 */
-		static Arguments parse(String[] args) {
-			Arguments parsed = new Arguments();
-			for (int i = 0; i < args.length; i++) {
-				String flag = args[i];
-				switch (flag) {
-					case "--help", "-h" -> parsed.help = true;
-					case "--include-warnings" -> parsed.includeWarnings = true;
-					case "--include-notices" -> parsed.includeNotices = true;
-					case "--debug" -> parsed.debug = true;
-					case "--url" -> parsed.url = value(args, ++i, flag);
-					case "--chrome" -> parsed.chromeUrl = value(args, ++i, flag);
-					case "--scanner-dir" -> parsed.scannerDir = Path.of(value(args, ++i, flag));
-					case "--standard" -> parsed.standard = standard(value(args, ++i, flag));
-					case "--engine" -> parsed.engines.add(engine(value(args, ++i, flag)));
-					case "--timeout" -> parsed.timeout = Duration.ofSeconds(number(value(args, ++i, flag), flag));
-					case "--wait" -> parsed.wait = Duration.ofMillis(number(value(args, ++i, flag), flag));
-					case "--viewport" -> parsed.viewport(value(args, ++i, flag));
-					case "--root-element" -> parsed.rootElement = value(args, ++i, flag);
-					case "--hide-elements" -> parsed.hideElements = value(args, ++i, flag);
-					case "--ignore" -> parsed.ignore.add(value(args, ++i, flag));
-					case "--header" -> parsed.header(value(args, ++i, flag));
-					case "--action" -> parsed.actions.add(value(args, ++i, flag));
-					case "--out" -> parsed.outputFile = Path.of(value(args, ++i, flag));
-					default -> throw new IllegalArgumentException("Unknown option: " + flag);
-				}
-			}
-			if (!parsed.help && (parsed.url == null || parsed.url.isBlank())) {
-				throw new IllegalArgumentException("--url is required.");
-			}
-			return parsed;
-		}
-
-		/**
-		 * @return the arguments as a scan request
-		 */
-		ScanRequest toRequest() {
-			ScanRequest.Builder builder = ScanRequest.forUrl(url)
-					.standard(standard)
-					.includeWarnings(includeWarnings)
-					.includeNotices(includeNotices)
-					.timeout(timeout)
-					.waitAfterLoad(wait)
-					.viewport(viewportWidth, viewportHeight)
-					.rootElement(rootElement)
-					.hideElements(hideElements)
-					.headers(headers)
-					.actions(actions.toArray(String[]::new))
-					.ignore(ignore.toArray(String[]::new));
-			if (!engines.isEmpty()) {
-				builder.engines(engines);
-			}
-			return builder.build();
-		}
-
-		/**
-		 * @param specification a {@code WxH} pair
-		 */
-		private void viewport(String specification) {
-			String[] parts = specification.toLowerCase().split("x", 2);
-			if (parts.length != 2) {
-				throw new IllegalArgumentException("--viewport expects WIDTHxHEIGHT, e.g. 1280x1024");
-			}
-			viewportWidth = (int) number(parts[0], "--viewport");
-			viewportHeight = (int) number(parts[1], "--viewport");
-		}
-
-		/**
-		 * @param specification a {@code Name: value} pair
-		 */
-		private void header(String specification) {
-			int separator = specification.indexOf(':');
-			if (separator <= 0) {
-				throw new IllegalArgumentException("--header expects NAME:VALUE, e.g. \"Authorization: Bearer abc\"");
-			}
-			headers.put(specification.substring(0, separator).trim(), specification.substring(separator + 1).trim());
-		}
-
-		/**
-		 * @param args the command line
-		 * @param index where the value should be
-		 * @param flag the option being read
-		 * @return the value
-		 */
-		private static String value(String[] args, int index, String flag) {
-			if (index >= args.length) {
-				throw new IllegalArgumentException(flag + " needs a value.");
-			}
-			return args[index];
-		}
-
-		/**
-		 * @param value the raw text
-		 * @param flag  the option being read
-		 * @return it as a number
-		 */
-		private static long number(String value, String flag) {
-			try {
-				return Long.parseLong(value.trim());
-			} catch (NumberFormatException e) {
-				throw new IllegalArgumentException(flag + " expects a number, got '" + value + "'.");
-			}
-		}
-
-		/**
-		 * @param value the raw text
-		 * @return the matching standard
-		 */
-		private static Standard standard(String value) {
-			for (Standard candidate : Standard.values()) {
-				if (candidate.wireName().equalsIgnoreCase(value)) {
-					return candidate;
-				}
-			}
-			throw new IllegalArgumentException("Unknown standard '" + value + "'. Use WCAG2A, WCAG2AA or WCAG2AAA.");
-		}
-
-		/**
-		 * @param value the raw text
-		 * @return the matching engine
-		 */
-		private static ScanEngine engine(String value) {
-			for (ScanEngine candidate : ScanEngine.values()) {
-				if (candidate.wireName().equalsIgnoreCase(value)) {
-					return candidate;
-				}
-			}
-			throw new IllegalArgumentException("Unknown engine '" + value + "'. Use htmlcs or axe.");
-		}
+				'pa11y-runner help <command>' explains one command in full.""";
 	}
 }

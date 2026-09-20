@@ -16,61 +16,104 @@ class Pa11yCliTest {
 	private final ByteArrayOutputStream err = new ByteArrayOutputStream();
 
 	@Test
-	@DisplayName("--help explains itself and succeeds")
-	void printsHelp() {
-		assertEquals(Pa11yCli.EXIT_CLEAN, run("--help"));
-		assertTrue(output().contains("--chrome"), output());
-		assertTrue(output().contains("Exit codes"), output());
-	}
-
-	@Test
-	@DisplayName("a missing --url is a usage error, not a failed scan")
-	void requiresUrl() {
+	@DisplayName("no arguments prints the three commands rather than doing something surprising")
+	void noArgumentsShowsUsage() {
 		assertEquals(Pa11yCli.EXIT_USAGE, run());
-		assertTrue(errors().contains("--url is required"), errors());
+		assertTrue(errors().contains("clean"), errors());
+		assertTrue(errors().contains("scan"), errors());
+		assertTrue(errors().contains("report"), errors());
 	}
 
 	@Test
-	@DisplayName("an unknown option is rejected rather than ignored")
+	@DisplayName("help explains the whole workflow, and each command on its own")
+	void helpExplainsEachCommand() {
+		assertEquals(Pa11yCli.EXIT_CLEAN, run("help"));
+		assertTrue(output().contains("A typical run"), output());
+
+		reset();
+		assertEquals(Pa11yCli.EXIT_CLEAN, run("help", "scan"));
+		assertTrue(output().contains("--name"), output());
+
+		reset();
+		assertEquals(Pa11yCli.EXIT_CLEAN, run("help", "report"));
+		assertTrue(output().contains("--out"), output());
+
+		reset();
+		assertEquals(Pa11yCli.EXIT_CLEAN, run("help", "clean"));
+		assertTrue(output().contains("--all"), output());
+	}
+
+	@Test
+	@DisplayName("an unknown command is rejected")
+	void rejectsUnknownCommand() {
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scandalise"));
+		assertTrue(errors().contains("Unknown command"), errors());
+	}
+
+	@Test
+	@DisplayName("cleardown is accepted as a name for clean, since that is what a run calls the step")
+	void acceptsCleardownAlias() {
+		assertEquals(Pa11yCli.EXIT_CLEAN, run("help", "cleardown"));
+		assertTrue(output().contains("empty the reports directory"), output());
+	}
+
+	@Test
+	@DisplayName("scan needs a name to save the page under")
+	void scanRequiresName() {
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--chrome", "grid:9222"));
+		assertTrue(errors().contains("--name is required"), errors());
+	}
+
+	@Test
+	@DisplayName("a misspelled option is rejected rather than silently ignored")
 	void rejectsUnknownOption() {
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url", "https://example.com", "--nonsense"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "checkout", "--reports-dirr", "out"));
 		assertTrue(errors().contains("Unknown option"), errors());
 	}
 
 	@Test
 	@DisplayName("an option missing its value is rejected rather than swallowing the next flag")
 	void rejectsOptionWithoutValue() {
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name"));
 		assertTrue(errors().contains("needs a value"), errors());
 	}
 
 	@Test
 	@DisplayName("malformed viewport, header, standard and engine values are explained")
 	void explainsMalformedValues() {
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url", "https://example.com", "--viewport", "wide"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--viewport", "wide"));
 		assertTrue(errors().contains("WIDTHxHEIGHT"), errors());
 
 		reset();
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url", "https://example.com", "--header", "no-separator"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--header", "no-separator"));
 		assertTrue(errors().contains("NAME:VALUE"), errors());
 
 		reset();
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url", "https://example.com", "--standard", "WCAG9"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--standard", "WCAG9"));
 		assertTrue(errors().contains("Unknown standard"), errors());
 
 		reset();
-		assertEquals(Pa11yCli.EXIT_USAGE, run("--url", "https://example.com", "--engine", "lighthouse"));
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--engine", "lighthouse"));
 		assertTrue(errors().contains("Unknown engine"), errors());
 	}
 
 	@Test
-	@DisplayName("a scan that cannot run exits 3, which is distinct from the 0 a clean page gets")
-	void unreachableChromeIsNotACleanPage() {
-		// Port 1 is reserved, so nothing is listening. The point of the assertion is the
-		// code: a scanner that could not run must never be mistaken for a passing page.
-		int exitCode = run("--url", "https://example.com", "--chrome", "http://127.0.0.1:1");
+	@DisplayName("a scan that cannot reach Chrome exits 3, distinct from the 0 a working scan gets")
+	void unreachableChromeIsNotSuccess() {
+		// Port 1 is reserved, so nothing is listening. The point is the code: a scanner that
+		// could not run must never be mistaken for a page with nothing wrong.
+		int exitCode = run("scan", "--name", "checkout", "--chrome", "http://127.0.0.1:1");
 
 		assertEquals(Pa11yCli.EXIT_SCAN_FAILED, exitCode);
+	}
+
+	@Test
+	@DisplayName("report exits 3 when there is nothing to combine, because that means the scans did not run")
+	void reportWithNothingToCombineFails() {
+		int exitCode = run("report", "--reports-dir", "target/no-such-reports-directory");
+
+		assertEquals(Pa11yCli.EXIT_SCAN_FAILED, exitCode);
+		assertTrue(errors().contains("No page reports found"), errors());
 	}
 
 	/**

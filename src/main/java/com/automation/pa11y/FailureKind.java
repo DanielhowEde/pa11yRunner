@@ -18,6 +18,12 @@ public enum FailureKind {
 	/** The page took longer than the scan timeout. */
 	TIMEOUT,
 
+	/** Nothing was open to scan. The test should navigate before asking for a scan. */
+	NO_PAGE_OPEN,
+
+	/** Several tabs are open and none is clearly the active one, so scan a URL instead. */
+	AMBIGUOUS_PAGE,
+
 	/** The scanner's npm dependencies are missing. Run {@code npm ci} in the scanner directory. */
 	SCANNER_NOT_INSTALLED,
 

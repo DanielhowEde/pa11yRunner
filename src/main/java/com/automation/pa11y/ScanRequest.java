@@ -9,47 +9,45 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * One page to scan, and how to scan it.
+ * What to scan, and how to scan it.
  *
- * <p>The defaults are Pa11y's own: WCAG2AA, the HTML CodeSniffer engine, errors only, a
- * sixty second timeout and a 1280x1024 viewport. For the common case that means:
+ * <p>There are two ways to say what to scan, and the difference matters:
  *
- * <pre>{@code
- * runner.scan("https://example.com/checkout");
- * }</pre>
+ * <ul>
+ * <li>{@link #currentPage()} scans the tab that is already open, exactly as it stands. Nothing
+ *     is reloaded, so an application that has been clicked into a particular state is measured
+ *     in that state. This is the one to use when the suite has already navigated.</li>
+ * <li>{@link #forUrl(String)} opens a new tab, loads the URL and closes the tab again. The
+ *     suite's own tab is untouched, but the page is loaded fresh, so any state built up by
+ *     clicking around is not there.</li>
+ * </ul>
  *
- * <p>and for anything else:
+ * <p>The remaining defaults are Pa11y's own: WCAG2AA, the HTML CodeSniffer engine, errors only
+ * and a sixty second timeout.
  *
- * <pre>{@code
- * ScanRequest request = ScanRequest.forUrl("https://example.com/checkout")
- *         .engines(ScanEngine.HTMLCS, ScanEngine.AXE)
- *         .includeWarnings(true)
- *         .waitAfterLoad(Duration.ofMillis(500))
- *         .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
- *         .build();
- * }</pre>
- *
- * @param url               the page to scan
+ * @param url               the page to load, or {@code null} when scanning the open tab
+ * @param scanCurrentPage   whether to scan the tab that is already open rather than loading {@code url}
  * @param standard          the standard to test against; used by HTML CodeSniffer only
  * @param engines           the engines to run
  * @param includeWarnings   whether warnings are reported as well as errors
  * @param includeNotices    whether notices are reported as well as errors
  * @param timeout           how long the whole scan may take
- * @param waitAfterLoad     how long to wait after load before inspecting, for slow client rendering
- * @param viewportWidth     viewport width in pixels
- * @param viewportHeight    viewport height in pixels
+ * @param waitAfterLoad     how long to wait before inspecting, for slow client rendering
+ * @param viewportWidth     viewport width in pixels; ignored when scanning the open tab
+ * @param viewportHeight    viewport height in pixels; ignored when scanning the open tab
  * @param rootElement       a CSS selector to limit the scan to, or {@code null} for the whole page
  * @param hideElements      a CSS selector for elements to exclude, or {@code null}
  * @param ignore            rule codes or issue types to drop from the results
- * @param headers           extra HTTP headers to send with the request
- * @param userAgent         the User-Agent to present, or {@code null} for Pa11y's default
+ * @param headers           extra HTTP headers to send; only applies when loading a URL
+ * @param userAgent         the User-Agent to present, or {@code null} to leave it alone
  * @param method            the HTTP method used to load the page
  * @param postData          the request body when {@code method} is POST, or {@code null}
  * @param screenCapture     where to save a screenshot of the scanned page, or {@code null}
- * @param actions           Pa11y actions to perform before scanning, e.g. {@code "click element #cookie-accept"}
+ * @param actions           Pa11y actions to perform before scanning, e.g. {@code "click element #accept"}
  */
 public record ScanRequest(
 		String url,
+		boolean scanCurrentPage,
 		Standard standard,
 		List<ScanEngine> engines,
 		boolean includeWarnings,
@@ -72,13 +70,14 @@ public record ScanRequest(
 	public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
 	/**
-	 * @param url               the page to scan
+	 * @param url               the page to load, or {@code null} when scanning the open tab
+	 * @param scanCurrentPage   whether to scan the tab that is already open
 	 * @param standard          the standard to test against
 	 * @param engines           the engines to run
 	 * @param includeWarnings   whether warnings are reported
 	 * @param includeNotices    whether notices are reported
 	 * @param timeout           how long the whole scan may take
-	 * @param waitAfterLoad     how long to wait after load before inspecting
+	 * @param waitAfterLoad     how long to wait before inspecting
 	 * @param viewportWidth     viewport width in pixels
 	 * @param viewportHeight    viewport height in pixels
 	 * @param rootElement       a CSS selector to limit the scan to
@@ -92,8 +91,9 @@ public record ScanRequest(
 	 * @param actions           Pa11y actions to perform first
 	 */
 	public ScanRequest {
-		if (url == null || url.isBlank()) {
-			throw new IllegalArgumentException("url is required");
+		if (!scanCurrentPage && (url == null || url.isBlank())) {
+			throw new IllegalArgumentException(
+					"url is required unless the request is for the currently open page");
 		}
 		standard = Objects.requireNonNullElse(standard, Standard.WCAG2AA);
 		engines = engines == null || engines.isEmpty() ? List.of(ScanEngine.HTMLCS) : List.copyOf(engines);
@@ -119,18 +119,39 @@ public record ScanRequest(
 	}
 
 	/**
+	 * Loads {@code url} in a new tab, scans it and closes the tab.
+	 *
 	 * @param url the page to scan
 	 * @return a builder already pointed at {@code url}
 	 */
 	public static Builder forUrl(String url) {
-		return new Builder(url);
+		return new Builder(url, false);
+	}
+
+	/**
+	 * Scans the tab that is already open, as it stands.
+	 *
+	 * <p>This is the usual choice when a Selenium suite has navigated to the page under test:
+	 * no URL has to be threaded through, and no state is lost to a reload.
+	 *
+	 * @return a builder for the open tab
+	 */
+	public static Builder currentPage() {
+		return new Builder(null, true);
+	}
+
+	/**
+	 * @return something to call this target in a message
+	 */
+	public String target() {
+		return scanCurrentPage ? "the page currently open in Chrome" : url;
 	}
 
 	/**
 	 * @return a builder holding this request's values, for deriving a variant of it
 	 */
 	public Builder toBuilder() {
-		return toBuilder(url);
+		return copyInto(new Builder(url, scanCurrentPage));
 	}
 
 	/**
@@ -140,21 +161,27 @@ public record ScanRequest(
 	 * then derive a request per page.
 	 *
 	 * <pre>{@code
-	 * private static final ScanRequest POLICY = ScanRequest.forUrl("about:blank")
+	 * private static final ScanRequest POLICY = ScanRequest.currentPage()
 	 *         .engines(ScanEngine.HTMLCS, ScanEngine.AXE)
 	 *         .rootElement("#main")
-	 *         .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
 	 *         .build();
 	 *
-	 * pa11y.scan(POLICY.toBuilder(driver.getCurrentUrl()).build());
+	 * pa11y.scan(POLICY.toBuilder("https://example.com/basket").build());
 	 * }</pre>
 	 *
-	 * @param url the page the derived request should scan
+	 * @param url the page the derived request should load
 	 * @return a builder holding this request's values, pointed at {@code url}
 	 */
 	public Builder toBuilder(String url) {
-		Builder builder = new Builder(url)
-				.standard(standard)
+		return copyInto(new Builder(url, false));
+	}
+
+	/**
+	 * @param builder a fresh builder for some target
+	 * @return it, with this request's options copied in
+	 */
+	private Builder copyInto(Builder builder) {
+		builder.standard(standard)
 				.engines(engines)
 				.includeWarnings(includeWarnings)
 				.includeNotices(includeNotices)
@@ -164,12 +191,12 @@ public record ScanRequest(
 				.rootElement(rootElement)
 				.hideElements(hideElements)
 				.userAgent(userAgent)
-				.postData(postData)
 				.screenCapture(screenCapture);
 		builder.ignore.addAll(ignore);
 		builder.headers.putAll(headers);
 		builder.actions.addAll(actions);
 		builder.method = method;
+		builder.postData = postData;
 		return builder;
 	}
 
@@ -177,6 +204,7 @@ public record ScanRequest(
 	public static final class Builder {
 
 		private final String url;
+		private final boolean scanCurrentPage;
 		private final List<String> ignore = new ArrayList<>();
 		private final Map<String, String> headers = new LinkedHashMap<>();
 		private final List<String> actions = new ArrayList<>();
@@ -195,8 +223,9 @@ public record ScanRequest(
 		private String postData;
 		private Path screenCapture;
 
-		private Builder(String url) {
+		private Builder(String url, boolean scanCurrentPage) {
 			this.url = url;
+			this.scanCurrentPage = scanCurrentPage;
 		}
 
 		/**
@@ -253,9 +282,8 @@ public record ScanRequest(
 		}
 
 		/**
-		 * Time to wait after the page has loaded before inspecting it. Worth setting for an
-		 * app that renders its real content after an XHR, where scanning on load measures a
-		 * spinner.
+		 * Time to wait before inspecting the page. Worth setting for an app that renders its
+		 * real content after an XHR, where scanning too early measures a spinner.
 		 *
 		 * @param waitAfterLoad how long to wait
 		 * @return this builder
@@ -266,6 +294,8 @@ public record ScanRequest(
 		}
 
 		/**
+		 * Ignored when scanning the open tab, which keeps the size the browser already has.
+		 *
 		 * @param width  viewport width in pixels
 		 * @param height viewport height in pixels
 		 * @return this builder
@@ -277,8 +307,8 @@ public record ScanRequest(
 		}
 
 		/**
-		 * Limits the scan to one part of the page, so that a shared header's known problems
-		 * do not show up against every page.
+		 * Limits the scan to one part of the page, so that a shared header's known problems do
+		 * not show up against every page.
 		 *
 		 * @param rootElement a CSS selector, or {@code null} for the whole page
 		 * @return this builder
@@ -330,7 +360,7 @@ public record ScanRequest(
 		}
 
 		/**
-		 * @param userAgent the User-Agent to present, or {@code null} for Pa11y's default
+		 * @param userAgent the User-Agent to present, or {@code null} to leave it alone
 		 * @return this builder
 		 */
 		public Builder userAgent(String userAgent) {
@@ -349,11 +379,6 @@ public record ScanRequest(
 			return this;
 		}
 
-		private Builder postData(String postData) {
-			this.postData = postData;
-			return this;
-		}
-
 		/**
 		 * Saves a screenshot of the page as scanned. Handy for working out why a scan saw
 		 * something other than what the tester expected.
@@ -368,7 +393,8 @@ public record ScanRequest(
 
 		/**
 		 * Adds a Pa11y action to run before the scan, such as
-		 * {@code "click element #cookie-accept"} or {@code "wait for element #results to be visible"}.
+		 * {@code "click element #cookie-accept"} or
+		 * {@code "wait for element #results to be visible"}.
 		 *
 		 * @param actions the actions, in order
 		 * @return this builder
@@ -383,9 +409,9 @@ public record ScanRequest(
 		 */
 		public ScanRequest build() {
 			return new ScanRequest(
-					url, standard, engines, includeWarnings, includeNotices, timeout, waitAfterLoad,
-					viewportWidth, viewportHeight, rootElement, hideElements, ignore, headers,
-					userAgent, method, postData, screenCapture, actions);
+					url, scanCurrentPage, standard, engines, includeWarnings, includeNotices, timeout,
+					waitAfterLoad, viewportWidth, viewportHeight, rootElement, hideElements, ignore,
+					headers, userAgent, method, postData, screenCapture, actions);
 		}
 	}
 }
