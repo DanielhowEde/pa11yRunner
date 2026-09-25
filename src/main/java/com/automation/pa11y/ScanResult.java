@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  * @param pageUrl       the URL actually scanned, after any redirects
  * @param documentTitle the page's {@code <title>}
  * @param duration      how long the scan took
- * @param issues        every issue found, in the order the engines reported them
+ * @param issues        every issue found, in the order Pa11y reported them
  */
 public record ScanResult(
 		String requestedUrl,
@@ -34,13 +34,6 @@ public record ScanResult(
 		Duration duration,
 		List<Issue> issues) {
 
-	/**
-	 * @param requestedUrl  the URL that was asked for
-	 * @param pageUrl       the URL actually scanned
-	 * @param documentTitle the page's title
-	 * @param duration      how long the scan took
-	 * @param issues        every issue found
-	 */
 	public ScanResult {
 		requestedUrl = Objects.requireNonNullElse(requestedUrl, "");
 		pageUrl = Objects.requireNonNullElse(pageUrl, "");

@@ -108,36 +108,19 @@ class CombinedReportTest {
 		assertEquals(3, report.totalIssues());
 	}
 
-	/**
-	 * @param groups the groups to name
-	 * @return their rule codes, in order
-	 */
 	private static List<String> codes(List<RuleGroup> groups) {
 		return groups.stream().map(RuleGroup::code).toList();
 	}
 
-	/**
-	 * @param name   the page name
-	 * @param issues what it found
-	 * @return the page report
-	 */
 	private static PageReport page(String name, Issue... issues) {
 		return new PageReport(name, "https://example.com/" + name, "https://example.com/" + name,
 				name, Instant.now(), Duration.ofMillis(100), "WCAG2AA", List.of("htmlcs"), List.of(issues));
 	}
 
-	/**
-	 * @param code the rule identifier
-	 * @return an error-level issue
-	 */
 	private static Issue issue(String code) {
 		return new Issue(code, IssueType.ERROR, 1, "Something is wrong", "<img>", "img.hero", "htmlcs", null);
 	}
 
-	/**
-	 * @param code the rule identifier
-	 * @return a warning-level issue
-	 */
 	private static Issue warning(String code) {
 		return new Issue(code, IssueType.WARNING, 2, "Might be wrong", "<p>", "p", "htmlcs", null);
 	}

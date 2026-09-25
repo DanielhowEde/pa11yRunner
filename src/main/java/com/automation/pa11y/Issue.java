@@ -12,8 +12,8 @@ import java.util.Objects;
  * @param message      the human-readable description
  * @param context      the offending HTML, truncated by Pa11y
  * @param selector     a CSS selector for the element, usable with {@code By.cssSelector}
- * @param engine       which engine reported it
- * @param engineExtras engine-specific detail; populated by axe, empty for HTML CodeSniffer
+ * @param engine       which Pa11y runner reported it; always {@code htmlcs}
+ * @param engineExtras runner-specific detail, as Pa11y reports it; empty for HTML CodeSniffer
  */
 public record Issue(
 		String code,
@@ -25,16 +25,6 @@ public record Issue(
 		String engine,
 		Map<String, Object> engineExtras) {
 
-	/**
-	 * @param code         the rule identifier
-	 * @param type         how severe the engine considers it
-	 * @param typeCode     Pa11y's numeric form of {@code type}
-	 * @param message      the human-readable description
-	 * @param context      the offending HTML
-	 * @param selector     a CSS selector for the element
-	 * @param engine       which engine reported it
-	 * @param engineExtras engine-specific detail
-	 */
 	public Issue {
 		code = Objects.requireNonNullElse(code, "");
 		type = Objects.requireNonNullElse(type, IssueType.UNKNOWN);

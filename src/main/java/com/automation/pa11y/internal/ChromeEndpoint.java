@@ -144,11 +144,6 @@ public final class ChromeEndpoint {
 		return literalAddress(host) + ":" + port;
 	}
 
-	/**
-	 * @param text      the port as written
-	 * @param chromeUrl the whole address, for the error message
-	 * @return the port number
-	 */
 	private static int port(String text, String chromeUrl) {
 		if (text.isBlank()) {
 			return DEFAULT_PORT;
@@ -164,10 +159,6 @@ public final class ChromeEndpoint {
 		}
 	}
 
-	/**
-	 * @param host a hostname or address
-	 * @return an IP literal, or {@code localhost} unchanged since Chrome allows that by name
-	 */
 	private static String literalAddress(String host) {
 		if (host.equalsIgnoreCase("localhost") || isIpLiteral(host)) {
 			return host;
@@ -187,10 +178,6 @@ public final class ChromeEndpoint {
 		}
 	}
 
-	/**
-	 * @param host a hostname or address
-	 * @return {@code true} if it is already an IP address rather than a name
-	 */
 	private static boolean isIpLiteral(String host) {
 		if (host.startsWith("[") || host.indexOf(':') >= 0) {
 			return true;
@@ -198,12 +185,6 @@ public final class ChromeEndpoint {
 		return host.matches("\\d{1,3}(\\.\\d{1,3}){3}");
 	}
 
-	/**
-	 * @param versionUrl  the /json/version endpoint
-	 * @param timeout     how long to allow
-	 * @param configured  the address as the caller wrote it, for the error message
-	 * @return the parsed response
-	 */
 	private static JsonNode fetchVersion(String versionUrl, Duration timeout, String configured) {
 		HttpClient client = HttpClient.newBuilder()
 				.connectTimeout(timeout)
@@ -256,17 +237,17 @@ public final class ChromeEndpoint {
 		return name.isEmpty() ? failure.getClass().getName() : name;
 	}
 
-	/**
-	 * @param configured  the address as the caller wrote it
-	 * @param versionUrl  the endpoint that was tried
-	 * @param detail      the underlying error
-	 * @return a message that names the usual causes
-	 */
 	private static String unreachableAdvice(String configured, String versionUrl, String detail) {
 		return """
 				Could not reach Chrome's debugger at %s (configured as %s): %s
 
-				Chrome on the Grid node needs to have been started with all of:
+				If this browser was started by Selenium Grid, a fixed port is the wrong route:
+				chromedriver binds the DevTools port to loopback whatever --remote-debugging-address
+				says, so it is unreachable from another machine. Use Grid's own endpoint instead:
+
+				  ws://<grid-host>:4444/session/<sessionId>/se/cdp
+
+				For a Chrome you launch yourself, it needs all of:
 				  --remote-debugging-port=9222
 				  --remote-debugging-address=0.0.0.0   (without this it only listens on loopback)
 				  --remote-allow-origins=*             (Chrome 111+ rejects the WebSocket without it)

@@ -19,22 +19,26 @@ class ScanRequestTest {
 		ScanRequest request = ScanRequest.of("https://example.com");
 
 		assertEquals(Standard.WCAG2AA, request.standard());
-		assertEquals(List.of(ScanEngine.HTMLCS), request.engines());
 		assertFalse(request.includeWarnings());
 		assertFalse(request.includeNotices());
 		assertEquals(Duration.ofSeconds(60), request.timeout());
 		assertEquals(Duration.ZERO, request.waitAfterLoad());
-		assertEquals(1280, request.viewportWidth());
-		assertEquals(1024, request.viewportHeight());
-		assertEquals("GET", request.method());
+		assertTrue(request.ignore().isEmpty());
+		assertTrue(request.actions().isEmpty());
 	}
 
 	@Test
-	@DisplayName("an empty engine list falls back to htmlcs instead of scanning with nothing")
-	void emptyEngineListFallsBack() {
-		ScanRequest request = ScanRequest.forUrl("https://example.com").engines(List.of()).build();
+	@DisplayName("a url request and a current-page request are told apart")
+	void distinguishesTheTwoTargets() {
+		ScanRequest byUrl = ScanRequest.of("https://example.com");
+		ScanRequest open = ScanRequest.currentPage().build();
 
-		assertEquals(List.of(ScanEngine.HTMLCS), request.engines());
+		assertFalse(byUrl.scanCurrentPage());
+		assertEquals("https://example.com", byUrl.target());
+
+		assertTrue(open.scanCurrentPage());
+		assertEquals(null, open.url());
+		assertTrue(open.target().contains("currently open"));
 	}
 
 	@Test
@@ -45,27 +49,17 @@ class ScanRequestTest {
 	}
 
 	@Test
-	@DisplayName("rejects a viewport that cannot be rendered")
-	void rejectsImpossibleViewport() {
-		assertThrows(IllegalArgumentException.class,
-				() -> ScanRequest.forUrl("https://example.com").viewport(0, 1024).build());
-	}
-
-	@Test
 	@DisplayName("collects repeated options rather than replacing them")
 	void collectsRepeatedOptions() {
 		ScanRequest request = ScanRequest.forUrl("https://example.com")
 				.ignore("code-one")
 				.ignore("code-two")
-				.header("Authorization", "Bearer token")
-				.header("X-Env", "staging")
 				.actions("click element #accept")
+				.actions("wait for element #results to be visible")
 				.build();
 
 		assertEquals(List.of("code-one", "code-two"), request.ignore());
-		assertEquals(2, request.headers().size());
-		assertEquals("Bearer token", request.headers().get("Authorization"));
-		assertEquals(List.of("click element #accept"), request.actions());
+		assertEquals(2, request.actions().size());
 	}
 
 	@Test
@@ -85,29 +79,35 @@ class ScanRequestTest {
 	void toBuilderRoundTrips() {
 		ScanRequest original = ScanRequest.forUrl("https://example.com/one")
 				.standard(Standard.WCAG2AAA)
-				.engines(ScanEngine.HTMLCS, ScanEngine.AXE)
 				.includeWarnings(true)
+				.includeNotices(true)
 				.timeout(Duration.ofSeconds(90))
 				.waitAfterLoad(Duration.ofMillis(250))
-				.viewport(375, 812)
 				.rootElement("#main")
 				.hideElements(".advert")
 				.ignore("noisy-rule")
-				.header("X-Env", "staging")
 				.actions("click element #accept")
-				.request("POST", "a=b")
 				.build();
 
-		ScanRequest copy = original.toBuilder().build();
+		assertEquals(original, original.toBuilder().build());
+	}
 
-		assertEquals(original, copy);
+	@Test
+	@DisplayName("toBuilder keeps a current-page request pointed at the open tab")
+	void toBuilderKeepsTheCurrentPageTarget() {
+		ScanRequest open = ScanRequest.currentPage().rootElement("#main").build();
+
+		ScanRequest copy = open.toBuilder().build();
+
+		assertTrue(copy.scanCurrentPage());
+		assertEquals("#main", copy.rootElement());
 	}
 
 	@Test
 	@DisplayName("toBuilder(url) keeps the policy and changes only the page, for scanning many screens alike")
 	void toBuilderRepointsAtAnotherPage() {
-		ScanRequest policy = ScanRequest.forUrl("about:blank")
-				.engines(ScanEngine.HTMLCS, ScanEngine.AXE)
+		ScanRequest policy = ScanRequest.currentPage()
+				.standard(Standard.WCAG2AAA)
 				.rootElement("#main")
 				.ignore("noisy-rule")
 				.includeWarnings(true)
@@ -116,24 +116,26 @@ class ScanRequestTest {
 		ScanRequest checkout = policy.toBuilder("https://example.com/checkout").build();
 
 		assertEquals("https://example.com/checkout", checkout.url());
-		assertEquals(List.of(ScanEngine.HTMLCS, ScanEngine.AXE), checkout.engines());
+		assertFalse(checkout.scanCurrentPage(), "a url request should stop being a current-page one");
+		assertEquals(Standard.WCAG2AAA, checkout.standard());
 		assertEquals("#main", checkout.rootElement());
 		assertEquals(List.of("noisy-rule"), checkout.ignore());
 		assertTrue(checkout.includeWarnings());
-		assertEquals("about:blank", policy.url(), "the baseline should be unchanged");
+		assertTrue(policy.scanCurrentPage(), "the baseline should be unchanged");
 	}
 
 	@Test
 	@DisplayName("toBuilder can change one option without disturbing the rest")
 	void toBuilderVariesOneOption() {
-		ScanRequest mobile = ScanRequest.forUrl("https://example.com")
-				.viewport(375, 812)
+		ScanRequest original = ScanRequest.forUrl("https://example.com")
 				.includeWarnings(true)
+				.rootElement("#main")
 				.build();
 
-		ScanRequest desktop = mobile.toBuilder().viewport(1440, 900).build();
+		ScanRequest longer = original.toBuilder().timeout(Duration.ofSeconds(120)).build();
 
-		assertEquals(1440, desktop.viewportWidth());
-		assertTrue(desktop.includeWarnings());
+		assertEquals(Duration.ofSeconds(120), longer.timeout());
+		assertTrue(longer.includeWarnings());
+		assertEquals("#main", longer.rootElement());
 	}
 }

@@ -116,11 +116,6 @@ public final class Pa11yRunner {
 		return toResult(request, response);
 	}
 
-	/**
-	 * @param request  what was asked for
-	 * @param response what the scanner reported
-	 * @return the public result
-	 */
 	private static ScanResult toResult(ScanRequest request, ScanResponse response) {
 		List<Issue> issues = new ArrayList<>(response.issuesOrEmpty().size());
 		for (ScanResponse.WireIssue wire : response.issuesOrEmpty()) {
@@ -226,10 +221,6 @@ public final class Pa11yRunner {
 			return new Pa11yRunner(this, modulesDir);
 		}
 
-		/**
-		 * @param values candidate settings, most specific first
-		 * @return the first that is set and not blank, or {@code null}
-		 */
 		private static String firstSet(String... values) {
 			for (String value : values) {
 				if (value != null && !value.isBlank()) {

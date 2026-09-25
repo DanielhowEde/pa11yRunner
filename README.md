@@ -42,8 +42,18 @@ java -jar pa11y-runner-1.0.0-all.jar scan --chrome grid-node-3:9222 --name check
 java -jar pa11y-runner-1.0.0-all.jar report --out accessibility-report.html
 ```
 
-`scan` needs no URL. Your test has already navigated, so the scanner finds the open page itself and
-measures that. Pass `--url` only if you want it to load something else in a separate tab instead.
+`scan` needs no URL, and **it does not navigate**. Your test has already done that. The scanner
+attaches over the debug port, finds the page that is open and measures the DOM as it stands —
+no `goto`, no reload, nothing fetched.
+
+That is the difference between measuring your application and measuring its start page. It has been
+proved end to end against a real Selenium Grid, in the way a reload would have made impossible: a
+page that is **clean when served**, a WebDriver session that injects an unlabelled input and an
+`alt`-less image into the live DOM and changes the `<title>`, then a scan. The scan reported the
+runtime title and exactly those three injected defects. A reload would have fetched the clean page
+and found nothing. Afterwards the session was still usable and its DOM still intact.
+
+Pass `--url` only if you want a *different* page loaded in a separate tab.
 
 From Java, that middle command is:
 
@@ -146,9 +156,39 @@ the CLI) and `target/pa11y-runner-1.0.0.jar` (a normal Maven dependency).
 
 ---
 
-## Setting up Chrome
+## Connecting to the Grid's Chrome
 
-The Grid node's Chrome needs **all three** of these flags:
+**With Selenium Grid, use the `se:cdp` capability.** Not a fixed `:9222`. This is the part that
+surprises people, so it is worth being precise about why.
+
+When Grid starts a browser it goes through chromedriver, and **chromedriver binds the DevTools port
+to loopback whatever you ask for**. You can pass `--remote-debugging-address=0.0.0.0` on the
+`ChromeOptions`, watch it appear in Chrome's command line, and still find 9222 answering only from
+inside the node. Nothing is misconfigured; chromedriver simply overrides it. Verified against
+`selenium/standalone-chrome`: `curl localhost:9222/json/version` inside the container works,
+the same request to the container's own IP does not.
+
+Grid's own CDP endpoint has no such problem — it proxies through the port you already talk to:
+
+```java
+String sessionId = ((RemoteWebDriver) driver).getSessionId().toString();
+String cdp = "ws://" + gridHost + ":4444/session/" + sessionId + "/se/cdp";
+```
+
+then `--chrome "<that URL>"`. A `ws://` or `wss://` URL is passed straight through untouched.
+
+Build the URL from your own Grid address as above rather than reading the `se:cdp` capability
+directly. Grid fills that capability in with whatever address *it* thinks it has — on a standalone
+container that is the container's internal IP, which your test machine cannot route to. The session
+id is the only part you actually need from the driver.
+
+This also removes the multiple-sessions-per-node problem for free: the endpoint is per session, so
+nothing has to be a fixed port and nothing can attach to the wrong browser.
+
+### Chrome you launched yourself
+
+If the browser is **not** started by chromedriver — a Chrome you run directly on a machine, or a
+container built to expose it — then the flags do work and `--chrome host:9222` is the simpler route:
 
 ```
 --remote-debugging-port=9222
@@ -156,39 +196,8 @@ The Grid node's Chrome needs **all three** of these flags:
 --remote-allow-origins=*              Chrome 111+ rejects the WebSocket without it
 ```
 
-and port 9222 has to be reachable from wherever the tests run.
-
-If your suite creates the session, they go on the `ChromeOptions`:
-
-```java
-ChromeOptions options = new ChromeOptions();
-options.addArguments(
-        "--remote-debugging-port=9222",
-        "--remote-debugging-address=0.0.0.0",
-        "--remote-allow-origins=*");
-WebDriver driver = new RemoteWebDriver(gridUrl, options);
-```
-
-### If a node runs more than one session at a time
-
-A fixed port is a fixed port: two Chromes on one node cannot both have 9222, and the second will
-fail to bind or the scan will attach to the wrong browser. Two ways out.
-
-**One session per node.** Simplest, and what the flags above assume.
-
-**Or use Selenium's own CDP endpoint.** Selenium 4 publishes a per-session `se:cdp` capability that
-the Grid router proxies to the right browser, so no fixed port is involved:
-
-```java
-String cdp = String.valueOf(((RemoteWebDriver) driver).getCapabilities().getCapability("se:cdp"));
-// pass that to --chrome; a ws:// URL is used as-is
-```
-
-`--chrome` takes `ws://`/`wss://` URLs untouched, so this needs no change to the tool. Worth
-knowing: the direct `:9222` route is what has been tested end to end here, including from a
-different machine. The `se:cdp` route uses the same code path but is worth a one-off check against
-your own Grid, since Grid's proxying differs by version and `se:cdp` is absent under some Grid
-configurations.
+with port 9222 reachable from wherever the tests run. Both routes are tested end to end, including
+from a different machine.
 
 ### What the scan does to the tab it borrows
 
@@ -242,14 +251,31 @@ To save a page for the combined report from Java rather than through the CLI:
 new ReportStore(Path.of("target/pa11y-reports")).write(PageReport.of("checkout", request, result));
 ```
 
+### The engine
+
+Scans run **HTML CodeSniffer** and nothing else. Pa11y can also run axe-core; that is deliberately
+not offered here, so there is no `--engine` flag and no engine to choose. A script still passing
+`--engine` is told the option is unknown rather than having it quietly ignored.
+
+Note that the `axe-core` npm package stays in `scanner/node_modules` regardless — Pa11y declares it
+as a dependency of its own, so it cannot be removed while depending on Pa11y. It is never loaded,
+because Pa11y only requires a runner when that runner is asked for. If the goal was to get the
+package itself off disk rather than out of the results, that needs a different approach and is
+worth saying so.
+
+Restoring the choice later means sending more than one name in the `runners` array the scanner
+script is given, and deciding what a shared rule means in the combined report: it groups by rule
+code, and the two engines do not share a code for the same defect.
+
 ### Scan options
 
-Available on both the CLI and the builder:
+Available on both the CLI and the builder. There is no option for request headers, viewport size,
+user agent, POST body or screenshots: all of those only ever applied when loading a URL, and the
+normal path scans the tab that is already open, where the browser's own values are what matter.
 
 ```java
 ScanResult result = pa11y.scan(ScanRequest.currentPage()
         .standard(Standard.WCAG2AA)                 // WCAG2A / WCAG2AA (default) / WCAG2AAA
-        .engines(ScanEngine.HTMLCS, ScanEngine.AXE) // htmlcs by default; both merges the findings
         .includeWarnings(true)                      // errors only by default
         .waitAfterLoad(Duration.ofMillis(500))      // for content rendered late
         .rootElement("#main")                       // ignore the shared header's known problems
@@ -264,8 +290,8 @@ Define the policy once and point it at each page so every screen is judged by th
 
 ```java
 private static final ScanRequest POLICY = ScanRequest.currentPage()
-        .engines(ScanEngine.HTMLCS, ScanEngine.AXE)
         .rootElement("#main")
+        .ignore("WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail")
         .build();
 
 pa11y.scan(POLICY.toBuilder("https://example.com/basket").build());  // same policy, a given URL
@@ -378,8 +404,8 @@ That is the report doing its job — look at "Shared across pages". They are pro
 footer. Narrow the scans with `--root-element "#main"`, or drop specific rules with `--ignore`.
 
 **Seeing what the scanner saw**
-`--debug` makes the scanner log its progress; the log is attached to the error when a scan fails.
-`--screenshot page.png` saves the page as it was scanned.
+`--debug` makes the scanner log its progress, including which tab it picked and its URL; the log
+is attached to the error when a scan fails.
 
 ---
 

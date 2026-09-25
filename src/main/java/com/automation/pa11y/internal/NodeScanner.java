@@ -2,7 +2,6 @@ package com.automation.pa11y.internal;
 
 import com.automation.pa11y.FailureKind;
 import com.automation.pa11y.Pa11yException;
-import com.automation.pa11y.ScanEngine;
 import com.automation.pa11y.ScanFailedException;
 import com.automation.pa11y.ScanRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,14 +20,15 @@ import java.util.concurrent.TimeUnit;
 /**
  * Runs one scan by starting the Node scanner script and reading back what it wrote.
  *
- * <p>The process contract is narrow on purpose. The request goes in on stdin, so nothing
- * with credentials in it is ever written to disk or shows up in a process listing. The
- * result comes back in a file rather than on stdout, because Puppeteer and Pa11y's runners
- * are entitled to print whatever they like and a parser reading stdout would break the day
- * one of them did. Whatever they do print is captured for diagnostics.
+ * <p>The process contract is narrow on purpose. The request goes in on stdin, so nothing with
+ * credentials in it is ever written to disk or shows up in a process listing. The result comes
+ * back in a file rather than on stdout, because Puppeteer and Pa11y's runners are entitled to
+ * print whatever they like and a parser reading stdout would break the day one of them did.
+ * Whatever they do print is captured for diagnostics.
  */
 public final class NodeScanner {
 
+	/** Serialises the request only; reading the response is {@link ScanResponse#parse}. */
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
 	/**
@@ -57,8 +56,8 @@ public final class NodeScanner {
 	}
 
 	/**
-	 * @param request        what to scan
-	 * @param webSocketUrl   the resolved Chrome debugger URL
+	 * @param request      what to scan
+	 * @param webSocketUrl the resolved Chrome debugger URL
 	 * @return what the scanner reported
 	 * @throws ScanFailedException if the scan could not be run
 	 */
@@ -73,13 +72,6 @@ public final class NodeScanner {
 		}
 	}
 
-	/**
-	 * @param request      what to scan
-	 * @param webSocketUrl the resolved Chrome debugger URL
-	 * @param resultFile   where the script writes its response
-	 * @param outputFile   where the process output is captured
-	 * @return what the scanner reported
-	 */
 	private ScanResponse runWith(ScanRequest request, String webSocketUrl, Path resultFile, Path outputFile) {
 		String payload = serialise(buildRequest(request, webSocketUrl, resultFile));
 
@@ -92,9 +84,9 @@ public final class NodeScanner {
 			process = builder.start();
 		} catch (IOException e) {
 			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
-					"Could not start '" + nodeExecutable + "'. Node "
-					+ "22.13+ or 24+ has to be installed and on the PATH of the process running the tests, "
-					+ "or named with the pa11y.node.executable system property.", e);
+					"Could not start '" + nodeExecutable + "'. Node 22.13+ or 24+ has to be installed "
+					+ "and on the PATH of the process running the tests, or named with the "
+					+ "pa11y.node.executable system property.", e);
 		}
 
 		writeRequest(process, payload);
@@ -113,9 +105,9 @@ public final class NodeScanner {
 		if (!finished) {
 			process.destroyForcibly();
 			throw new ScanFailedException(FailureKind.TIMEOUT, request.target(),
-					"The scanner process did not finish within " + limit.toSeconds() + "s "
-					+ "(scan timeout " + request.timeout().toSeconds() + "s plus "
-					+ PROCESS_OVERHEAD.toSeconds() + "s of headroom).");
+					"The scanner process did not finish within " + limit.toSeconds() + "s (scan timeout "
+					+ request.timeout().toSeconds() + "s plus " + PROCESS_OVERHEAD.toSeconds()
+					+ "s of headroom).");
 		}
 
 		if (!Files.isRegularFile(resultFile)) {
@@ -124,13 +116,14 @@ public final class NodeScanner {
 					+ diagnostics(outputFile));
 		}
 
-		return parse(request, resultFile, outputFile);
+		try {
+			return ScanResponse.parse(Files.readString(resultFile, StandardCharsets.UTF_8));
+		} catch (IOException e) {
+			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
+					"The scanner's result file could not be read." + diagnostics(outputFile), e);
+		}
 	}
 
-	/**
-	 * @param process the running scanner
-	 * @param payload the JSON request
-	 */
 	private void writeRequest(Process process, String payload) {
 		try (OutputStream stdin = process.getOutputStream()) {
 			stdin.write(payload.getBytes(StandardCharsets.UTF_8));
@@ -142,29 +135,7 @@ public final class NodeScanner {
 		}
 	}
 
-	/**
-	 * @param request    what was scanned
-	 * @param resultFile the response written by the script
-	 * @param outputFile the captured process output
-	 * @return the parsed response
-	 */
-	private ScanResponse parse(ScanRequest request, Path resultFile, Path outputFile) {
-		try {
-			return MAPPER.readValue(Files.readString(resultFile, StandardCharsets.UTF_8), ScanResponse.class);
-		} catch (IOException e) {
-			throw new ScanFailedException(FailureKind.SCANNER_PROCESS_FAILED, request.target(),
-					"The scanner's result file could not be read." + diagnostics(outputFile), e);
-		}
-	}
-
-	/**
-	 * Assembles the JSON request. Field names here match the script's expectations.
-	 *
-	 * @param request      what to scan
-	 * @param webSocketUrl the resolved Chrome debugger URL
-	 * @param resultFile   where the script should write its response
-	 * @return the request as a map ready to serialise
-	 */
+	/** Field names here match what the scanner script expects. */
 	private Map<String, Object> buildRequest(ScanRequest request, String webSocketUrl, Path resultFile) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("scanCurrentPage", request.scanCurrentPage());
@@ -175,59 +146,33 @@ public final class NodeScanner {
 		payload.put("outputFile", resultFile.toAbsolutePath().toString());
 		payload.put("modulesDir", modulesDir.toAbsolutePath().toString());
 		payload.put("standard", request.standard().wireName());
-		payload.put("runners", engineNames(request.engines()));
+		// Still an array because that is the shape Pa11y's own option takes, but there is only
+		// ever one name in it. See ScanRequest.ENGINE.
+		payload.put("runners", List.of(ScanRequest.ENGINE));
 		payload.put("includeWarnings", request.includeWarnings());
 		payload.put("includeNotices", request.includeNotices());
 		payload.put("timeout", request.timeout().toMillis());
 		payload.put("wait", request.waitAfterLoad().toMillis());
-		payload.put("viewport", Map.of("width", request.viewportWidth(), "height", request.viewportHeight()));
 		payload.put("ignore", request.ignore());
-		payload.put("headers", request.headers());
-		payload.put("method", request.method());
 		payload.put("actions", request.actions());
 		payload.put("debug", debug);
 
-		// Puppeteer's own protocol timeout has to outlast the scan, or a slow page is
-		// reported as a CDP failure rather than as the timeout it is.
+		// Puppeteer's own protocol timeout has to outlast the scan, or a slow page is reported
+		// as a CDP failure rather than as the timeout it is.
 		payload.put("protocolTimeout", request.timeout().plus(PROCESS_OVERHEAD).toMillis());
 
 		putIfSet(payload, "rootElement", request.rootElement());
 		putIfSet(payload, "hideElements", request.hideElements());
-		putIfSet(payload, "userAgent", request.userAgent());
-		putIfSet(payload, "postData", request.postData());
-		if (request.screenCapture() != null) {
-			payload.put("screenCapture", request.screenCapture().toAbsolutePath().toString());
-		}
 		return payload;
 	}
 
-	/**
-	 * @param payload the request being built
-	 * @param key     the field name
-	 * @param value   the value, skipped when {@code null} or blank so Pa11y's defaults apply
-	 */
+	/** Skips blanks so Pa11y's own defaults apply rather than an explicit empty value. */
 	private static void putIfSet(Map<String, Object> payload, String key, String value) {
 		if (value != null && !value.isBlank()) {
 			payload.put(key, value);
 		}
 	}
 
-	/**
-	 * @param engines the configured engines
-	 * @return their Pa11y names
-	 */
-	private static List<String> engineNames(List<ScanEngine> engines) {
-		List<String> names = new ArrayList<>(engines.size());
-		for (ScanEngine engine : engines) {
-			names.add(engine.wireName());
-		}
-		return names;
-	}
-
-	/**
-	 * @param payload the request being sent
-	 * @return it as JSON
-	 */
 	private static String serialise(Map<String, Object> payload) {
 		try {
 			return MAPPER.writeValueAsString(payload);
@@ -236,12 +181,6 @@ public final class NodeScanner {
 		}
 	}
 
-	/**
-	 * @param request what is being scanned, named in the temp file for easier debugging
-	 * @param name    the kind of file
-	 * @param suffix  the file extension
-	 * @return a new temporary file
-	 */
 	private static Path temporaryFile(ScanRequest request, String name, String suffix) {
 		try {
 			Path file = Files.createTempFile("pa11y-" + name + "-", suffix);
@@ -253,10 +192,7 @@ public final class NodeScanner {
 		}
 	}
 
-	/**
-	 * @param outputFile the captured process output
-	 * @return the tail of it, formatted for appending to an error message
-	 */
+	/** The tail of the captured output, formatted for appending to an error message. */
 	private static String diagnostics(Path outputFile) {
 		List<String> lines;
 		try {
@@ -274,9 +210,6 @@ public final class NodeScanner {
 				+ String.join(System.lineSeparator(), tail);
 	}
 
-	/**
-	 * @param file a temporary file that is no longer needed
-	 */
 	private static void deleteQuietly(Path file) {
 		try {
 			Files.deleteIfExists(file);

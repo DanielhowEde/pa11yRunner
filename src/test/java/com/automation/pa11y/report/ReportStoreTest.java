@@ -128,21 +128,12 @@ class ReportStoreTest {
 		assertEquals("checkout", read.get(0).name());
 	}
 
-	/**
-	 * @param name   the page name
-	 * @param issues what it found
-	 * @return the page report
-	 */
 	private static PageReport page(String name, Issue... issues) {
 		return new PageReport(name, "https://example.com/checkout", "https://example.com/checkout",
 				"Checkout", Instant.parse("2026-09-20T10:15:30Z"), Duration.ofMillis(1200),
 				"WCAG2AA", List.of("htmlcs"), List.of(issues));
 	}
 
-	/**
-	 * @param code the rule identifier
-	 * @return an error-level issue
-	 */
 	private static Issue issue(String code) {
 		return new Issue(code, IssueType.ERROR, 1, "Something is wrong", "<img src=\"a.png\">",
 				"img.hero", "htmlcs", null);

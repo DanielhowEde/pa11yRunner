@@ -99,10 +99,6 @@ async function main() {
 	process.exit(EXIT_OK);
 }
 
-/**
- * Reads the JSON request from stdin.
- * @returns {Promise<Object>} the parsed request
- */
 function readRequest() {
 	return new Promise((resolve, reject) => {
 		let raw = '';
@@ -134,18 +130,13 @@ function readRequest() {
 /**
  * Loads a module from the scanner's node_modules by absolute path.
  *
- * This script is extracted from the jar into a temp directory so that it can never drift
- * from the Java that drives it, which puts it outside the normal resolution path. Rather
- * than lean on NODE_PATH, the Java side says exactly which node_modules to use.
- *
- * @param {string} modulesDir - absolute path to a node_modules directory
- * @param {string} name - module to load
- * @returns {*} the module
+ * This script is extracted from the jar into a temp directory so that it can never drift from
+ * the Java that drives it, which puts it outside the normal resolution path. Rather than lean
+ * on NODE_PATH, the Java side says exactly which node_modules to use.
  */
 function requireFrom(modulesDir, name) {
-	const location = path.join(modulesDir, name);
 	try {
-		return require(location);
+		return require(path.join(modulesDir, name));
 	} catch (error) {
 		throw new ScanError(
 			'SCANNER_NOT_INSTALLED',
@@ -155,12 +146,6 @@ function requireFrom(modulesDir, name) {
 	}
 }
 
-/**
- * Attaches to the already-running Chrome.
- * @param {Object} puppeteer - the puppeteer module
- * @param {Object} request - the scan request
- * @returns {Promise<Object>} a connected browser
- */
 async function connectToBrowser(puppeteer, request) {
 	log(request, 'connecting to ' + request.browserWSEndpoint);
 	try {
@@ -179,16 +164,9 @@ async function connectToBrowser(puppeteer, request) {
 	}
 }
 
-/**
- * Decides what is going to be scanned.
- *
- * @param {Object} browser - the connected browser
- * @param {Object} request - the scan request
- * @returns {Promise<Object>} {page, url}; page is null when a new tab should be opened
- */
+/** Returns {page, url}; page is null when Pa11y should open a tab of its own. */
 async function resolveTarget(browser, request) {
 	if (!request.scanCurrentPage) {
-		// Pa11y is given a browser and no page, so it opens its own tab and closes it again.
 		return { page: null, url: request.url };
 	}
 
@@ -233,21 +211,14 @@ async function resolveTarget(browser, request) {
 	);
 }
 
-/**
- * @param {string} url - a target's URL
- * @returns {boolean} whether it could be the page under test
- */
 function isRealPage(url) {
 	return Boolean(url) && !NOT_A_PAGE.some(prefix => url === prefix || url.startsWith(prefix));
 }
 
 /**
- * Builds the options passed to Pa11y.
- *
- * @param {Object} request - the scan request
- * @param {Object} browser - the connected browser
- * @param {Object} target - what is being scanned
- * @returns {Promise<Object>} Pa11y options
+ * Only "browser" is passed for a URL scan, never "page": given a browser and no page, Pa11y
+ * opens its own tab and closes that tab when it is done, so the suite's tab is untouched and
+ * nothing is left behind.
  */
 async function pa11yOptions(request, browser, target) {
 	const options = {
@@ -259,8 +230,6 @@ async function pa11yOptions(request, browser, target) {
 		timeout: request.timeout,
 		wait: request.wait,
 		ignore: request.ignore || [],
-		headers: request.headers || {},
-		method: request.method || 'GET',
 		log: {
 			debug: message => log(request, message),
 			error: message => process.stderr.write('pa11y error: ' + message + '\n'),
@@ -274,13 +243,15 @@ async function pa11yOptions(request, browser, target) {
 		options.ignoreUrl = true;
 		// Pa11y always calls setViewport and setUserAgent. Handing it the values the tab
 		// already has makes both no-ops, so a live WebDriver session does not suddenly find
-		// itself in a different window size or pretending to be something else.
-		options.viewport = await currentViewport(target.page, request);
-		options.userAgent = request.userAgent || await currentUserAgent(target.page, request);
-	} else {
-		options.viewport = request.viewport;
-		if (request.userAgent) {
-			options.userAgent = request.userAgent;
+		// itself in a different window size or pretending to be something else. If either
+		// cannot be read the option is left out, and Pa11y's own default applies.
+		const viewport = await currentViewport(target.page, request);
+		if (viewport) {
+			options.viewport = viewport;
+		}
+		const userAgent = await currentUserAgent(target.page, request);
+		if (userAgent) {
+			options.userAgent = userAgent;
 		}
 	}
 
@@ -292,12 +263,6 @@ async function pa11yOptions(request, browser, target) {
 	if (request.hideElements) {
 		options.hideElements = request.hideElements;
 	}
-	if (request.postData) {
-		options.postData = request.postData;
-	}
-	if (request.screenCapture) {
-		options.screenCapture = request.screenCapture;
-	}
 	if (Array.isArray(request.actions) && request.actions.length > 0) {
 		options.actions = request.actions;
 	}
@@ -305,31 +270,19 @@ async function pa11yOptions(request, browser, target) {
 	return options;
 }
 
-/**
- * @param {Object} page - the page being scanned
- * @param {Object} request - the scan request
- * @returns {Promise<Object>} the tab's current size
- */
 async function currentViewport(page, request) {
 	try {
 		const size = await page.evaluate(() => ({
 			width: window.innerWidth,
 			height: window.innerHeight
 		}));
-		if (size && size.width > 0 && size.height > 0) {
-			return size;
-		}
+		return size && size.width > 0 && size.height > 0 ? size : undefined;
 	} catch (error) {
-		log(request, 'could not read the viewport, falling back to the requested one: ' + error.message);
+		log(request, 'could not read the viewport: ' + error.message);
+		return undefined;
 	}
-	return request.viewport;
 }
 
-/**
- * @param {Object} page - the page being scanned
- * @param {Object} request - the scan request
- * @returns {Promise<string|undefined>} the tab's current user agent
- */
 async function currentUserAgent(page, request) {
 	try {
 		return await page.evaluate(() => navigator.userAgent);
@@ -342,13 +295,9 @@ async function currentUserAgent(page, request) {
 /**
  * Returns a borrowed tab to the state WebDriver left it in.
  *
- * Pa11y sets the viewport and user agent through CDP, and those are *overrides*: they stay
- * in force after the scan even when the value set was the one already there. Clearing them
+ * Pa11y sets the viewport and user agent through CDP, and those are *overrides*: they stay in
+ * force after the scan even when the value set was the one already there. Clearing them
  * matters because the test carries on using this tab.
- *
- * @param {Object} page - the tab that was scanned
- * @param {Object} request - the scan request
- * @returns {Promise<void>} once the tab has been put back
  */
 async function handBack(page, request) {
 	let client = null;
@@ -377,11 +326,6 @@ async function handBack(page, request) {
 	}
 }
 
-/**
- * @param {Object} results - Pa11y's results
- * @param {number} startedAt - epoch millis
- * @returns {Object} the response for a scan that ran
- */
 function completed(results, startedAt) {
 	return {
 		status: 'COMPLETED',
@@ -404,10 +348,6 @@ function completed(results, startedAt) {
 /**
  * A scan that could not run at all. Distinct from a scan that ran and found problems -- see
  * the note on failure vs violations in the README.
- *
- * @param {Error} error - what went wrong
- * @param {number} startedAt - epoch millis
- * @returns {Object} the response for a scan that did not run
  */
 function failed(error, startedAt) {
 	return {
@@ -421,11 +361,7 @@ function failed(error, startedAt) {
 	};
 }
 
-/**
- * Turns a Puppeteer or Pa11y error into a failure kind the Java side can switch on.
- * @param {Error} error - what went wrong
- * @returns {string} a failure kind
- */
+/** Turns a Puppeteer or Pa11y error into a failure kind the Java side can switch on. */
 function classify(error) {
 	const message = (error && error.message) || '';
 	if (/net::ERR_|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION/.test(message)) {
@@ -442,20 +378,12 @@ function classify(error) {
 
 /** An error that already knows how it should be reported. */
 class ScanError extends Error {
-	/**
-	 * @param {string} kind - the failure kind
-	 * @param {string} message - human-readable detail
-	 */
 	constructor(kind, message) {
 		super(message);
 		this.kind = kind;
 	}
 }
 
-/**
- * @param {Object} request - the scan request
- * @param {string} message - the line to write
- */
 function log(request, message) {
 	if (request && request.debug) {
 		process.stderr.write('pa11y-cdp-scan: ' + message + '\n');

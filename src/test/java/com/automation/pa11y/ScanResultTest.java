@@ -88,10 +88,6 @@ class ScanResultTest {
 		assertEquals(Map.of(), issue.engineExtras());
 	}
 
-	/**
-	 * @param issues what the scan found
-	 * @return a result carrying them
-	 */
 	private static ScanResult resultWith(Issue... issues) {
 		return new ScanResult(
 				"https://example.com/page",
@@ -101,11 +97,6 @@ class ScanResultTest {
 				List.of(issues));
 	}
 
-	/**
-	 * @param code the rule identifier
-	 * @param type the severity
-	 * @return an issue
-	 */
 	private static Issue issue(String code, IssueType type) {
 		return new Issue(code, type, 1, "Something is wrong", "<img>", "img.hero", "htmlcs", Map.of());
 	}

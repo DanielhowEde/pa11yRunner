@@ -52,10 +52,6 @@ public final class ScannerLocation {
 		return search();
 	}
 
-	/**
-	 * @param configured the directory set on the builder, or {@code null}
-	 * @return the first explicit setting, or {@code null} if nothing was configured
-	 */
 	private static Configured explicitlyConfigured(Path configured) {
 		if (configured != null) {
 			return new Configured("Pa11yRunner.builder().scannerDirectory(...)", configured);
@@ -125,10 +121,6 @@ public final class ScannerLocation {
 		return Files.isDirectory(asModulesDir.resolve("pa11y")) ? asModulesDir : null;
 	}
 
-	/**
-	 * @param explicit what was configured, and where it came from
-	 * @return an error message that names the setting at fault
-	 */
 	private static String configuredButNotInstalled(Configured explicit) {
 		return """
 				No Pa11y install at %s, which came from %s.

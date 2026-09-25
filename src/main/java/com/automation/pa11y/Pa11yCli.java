@@ -101,11 +101,6 @@ public final class Pa11yCli {
 		return Path.of(configured);
 	}
 
-	/**
-	 * @param args the command line, where a subcommand may follow {@code help}
-	 * @param out  where the help goes
-	 * @return the exit code
-	 */
 	private static int help(String[] args, PrintStream out) {
 		String topic = args.length > 1 ? args[1] : "";
 		out.println(switch (topic) {
@@ -117,11 +112,6 @@ public final class Pa11yCli {
 		return EXIT_CLEAN;
 	}
 
-	/**
-	 * @param command what was typed
-	 * @param err     where the complaint goes
-	 * @return the exit code
-	 */
 	private static int unknown(String command, PrintStream err) {
 		err.println("Unknown command: " + command);
 		err.println();

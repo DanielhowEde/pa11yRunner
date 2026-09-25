@@ -46,9 +46,6 @@ public final class ScannerScript {
 		}
 	}
 
-	/**
-	 * @return the freshly unpacked script
-	 */
 	private static Path extract() {
 		try (InputStream source = ScannerScript.class.getResourceAsStream(RESOURCE)) {
 			if (source == null) {

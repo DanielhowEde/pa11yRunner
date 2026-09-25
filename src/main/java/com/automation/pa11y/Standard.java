@@ -6,8 +6,8 @@ package com.automation.pa11y;
  * <p>Pa11y treats the standard as an upper bound and tests everything at or below it, so
  * {@link #WCAG2AA} also reports level A failures.
  *
- * <p>Only the HTML CodeSniffer runner uses this. The axe runner has its own rule set and
- * ignores the standard entirely.
+ * <p>This is what HTML CodeSniffer tests against, and it appears at the front of every rule
+ * code it reports.
  */
 public enum Standard {
 

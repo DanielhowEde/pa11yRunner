@@ -3,7 +3,6 @@ package com.automation.pa11y.cli;
 import com.automation.pa11y.Pa11yCli;
 import com.automation.pa11y.Pa11yException;
 import com.automation.pa11y.Pa11yRunner;
-import com.automation.pa11y.ScanEngine;
 import com.automation.pa11y.ScanRequest;
 import com.automation.pa11y.ScanResult;
 import com.automation.pa11y.Standard;
@@ -13,8 +12,6 @@ import com.automation.pa11y.report.ReportStore;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -30,9 +27,8 @@ public final class ScanCommand {
 			"--include-warnings", "--include-notices", "--debug", "--fail-on-error");
 
 	private static final Set<String> OPTIONS = Set.of(
-			"--chrome", "--name", "--url", "--reports-dir", "--scanner-dir", "--standard", "--engine",
-			"--timeout", "--wait", "--viewport", "--root-element", "--hide-elements", "--ignore",
-			"--header", "--action", "--screenshot");
+			"--chrome", "--name", "--url", "--reports-dir", "--scanner-dir", "--standard",
+			"--timeout", "--wait", "--root-element", "--hide-elements", "--ignore", "--action");
 
 	private ScanCommand() {
 	}
@@ -50,10 +46,7 @@ public final class ScanCommand {
 			command = CommandLine.parse(args, 1, SWITCHES, OPTIONS);
 			name = command.require("--name");
 		} catch (IllegalArgumentException e) {
-			err.println(e.getMessage());
-			err.println();
-			err.println(usage());
-			return Pa11yCli.EXIT_USAGE;
+			return usageError(e, err);
 		}
 
 		ScanRequest request;
@@ -69,10 +62,7 @@ public final class ScanCommand {
 			}
 			runner = builder.build();
 		} catch (IllegalArgumentException e) {
-			err.println(e.getMessage());
-			err.println();
-			err.println(usage());
-			return Pa11yCli.EXIT_USAGE;
+			return usageError(e, err);
 		} catch (Pa11yException e) {
 			err.println(e.getMessage());
 			return Pa11yCli.EXIT_SCAN_FAILED;
@@ -82,8 +72,8 @@ public final class ScanCommand {
 		Path saved;
 		try {
 			result = runner.scan(request);
-			ReportStore store = new ReportStore(Pa11yCli.reportsDirectory(command));
-			saved = store.write(PageReport.of(name, request, result));
+			saved = new ReportStore(Pa11yCli.reportsDirectory(command))
+					.write(PageReport.of(name, request, result));
 		} catch (Pa11yException e) {
 			err.println(e.getMessage());
 			return Pa11yCli.EXIT_SCAN_FAILED;
@@ -91,22 +81,14 @@ public final class ScanCommand {
 
 		out.println(saved.toAbsolutePath());
 		err.printf("%s: %d error(s), %d warning(s), %d notice(s) on %s in %dms%n",
-				name,
-				result.errors().size(),
-				result.warnings().size(),
-				result.notices().size(),
-				result.pageUrl(),
-				result.duration().toMillis());
+				name, result.errors().size(), result.warnings().size(), result.notices().size(),
+				result.pageUrl(), result.duration().toMillis());
 
 		return command.has("--fail-on-error") && result.hasErrors()
 				? Pa11yCli.EXIT_ERRORS_FOUND
 				: Pa11yCli.EXIT_CLEAN;
 	}
 
-	/**
-	 * @param command the parsed command line
-	 * @return the scan to run
-	 */
 	private static ScanRequest buildRequest(CommandLine command) {
 		// No --url means the page is already on screen, which is the normal case when a suite
 		// has navigated and now wants it checked.
@@ -114,7 +96,8 @@ public final class ScanCommand {
 				? ScanRequest.forUrl(command.value("--url", null))
 				: ScanRequest.currentPage();
 
-		builder.standard(standard(command.value("--standard", "WCAG2AA")))
+		return builder
+				.standard(standard(command.value("--standard", "WCAG2AA")))
 				.includeWarnings(command.has("--include-warnings"))
 				.includeNotices(command.has("--include-notices"))
 				.timeout(Duration.ofSeconds(command.number("--timeout", 60)))
@@ -122,62 +105,17 @@ public final class ScanCommand {
 				.rootElement(command.value("--root-element", null))
 				.hideElements(command.value("--hide-elements", null))
 				.ignore(command.all("--ignore").toArray(String[]::new))
-				.actions(command.all("--action").toArray(String[]::new));
-
-		List<String> engines = command.all("--engine");
-		if (!engines.isEmpty()) {
-			builder.engines(engines.stream().map(ScanCommand::engine).toList());
-		}
-		if (command.has("--viewport")) {
-			int[] size = viewport(command.value("--viewport", null));
-			builder.viewport(size[0], size[1]);
-		}
-		if (command.has("--screenshot")) {
-			builder.screenCapture(Path.of(command.value("--screenshot", null)));
-		}
-		for (Map.Entry<String, String> header : headers(command).entrySet()) {
-			builder.header(header.getKey(), header.getValue());
-		}
-		return builder.build();
+				.actions(command.all("--action").toArray(String[]::new))
+				.build();
 	}
 
-	/**
-	 * @param command the parsed command line
-	 * @return the headers to send
-	 */
-	private static Map<String, String> headers(CommandLine command) {
-		Map<String, String> headers = new java.util.LinkedHashMap<>();
-		for (String specification : command.all("--header")) {
-			int separator = specification.indexOf(':');
-			if (separator <= 0) {
-				throw new IllegalArgumentException(
-						"--header expects NAME:VALUE, e.g. \"Authorization: Bearer abc\"");
-			}
-			headers.put(specification.substring(0, separator).trim(), specification.substring(separator + 1).trim());
-		}
-		return headers;
+	private static int usageError(IllegalArgumentException failure, PrintStream err) {
+		err.println(failure.getMessage());
+		err.println();
+		err.println(usage());
+		return Pa11yCli.EXIT_USAGE;
 	}
 
-	/**
-	 * @param specification a {@code WxH} pair
-	 * @return the width and height
-	 */
-	private static int[] viewport(String specification) {
-		String[] parts = specification.toLowerCase().split("x", 2);
-		if (parts.length != 2) {
-			throw new IllegalArgumentException("--viewport expects WIDTHxHEIGHT, e.g. 1280x1024");
-		}
-		try {
-			return new int[] { Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim()) };
-		} catch (NumberFormatException e) {
-			throw new IllegalArgumentException("--viewport expects WIDTHxHEIGHT, e.g. 1280x1024");
-		}
-	}
-
-	/**
-	 * @param value the raw text
-	 * @return the matching standard
-	 */
 	private static Standard standard(String value) {
 		for (Standard candidate : Standard.values()) {
 			if (candidate.wireName().equalsIgnoreCase(value)) {
@@ -185,19 +123,6 @@ public final class ScanCommand {
 			}
 		}
 		throw new IllegalArgumentException("Unknown standard '" + value + "'. Use WCAG2A, WCAG2AA or WCAG2AAA.");
-	}
-
-	/**
-	 * @param value the raw text
-	 * @return the matching engine
-	 */
-	private static ScanEngine engine(String value) {
-		for (ScanEngine candidate : ScanEngine.values()) {
-			if (candidate.wireName().equalsIgnoreCase(value)) {
-				return candidate;
-			}
-		}
-		throw new IllegalArgumentException("Unknown engine '" + value + "'. Use htmlcs or axe.");
 	}
 
 	/**
@@ -232,16 +157,12 @@ public final class ScanCommand {
 
 				Scan options:
 				  --standard <name>        WCAG2A, WCAG2AA (default) or WCAG2AAA.
-				  --engine <name>          htmlcs (default) or axe. Repeatable.
 				  --include-warnings       Report warnings as well as errors.
 				  --include-notices        Report notices as well as errors.
 				  --timeout <seconds>      Scan timeout. Default 60.
 				  --wait <millis>          Wait this long before scanning. Default 0.
-				  --viewport <WxH>         Only used with --url; the open tab keeps its own size.
 				  --ignore <code>          Drop issues with this code or type. Repeatable.
-				  --header <name:value>    Extra request header, only used with --url. Repeatable.
 				  --action <action>        A Pa11y action to run first. Repeatable.
-				  --screenshot <path>      Save a PNG of the page as scanned.
 
 				Other:
 				  --fail-on-error          Exit 1 when the page has errors. Off by default, because

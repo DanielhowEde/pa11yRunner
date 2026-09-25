@@ -86,11 +86,6 @@ public final class HtmlReport {
 		return html.toString();
 	}
 
-	/**
-	 * @param html   the document being built
-	 * @param report the analysis
-	 * @param title  the heading
-	 */
 	private static void appendHeader(StringBuilder html, CombinedReport report, String title) {
 		String standards = report.pages().stream()
 				.map(PageReport::standard)
@@ -109,10 +104,6 @@ public final class HtmlReport {
 		html.append("</p>\n</header>\n");
 	}
 
-	/**
-	 * @param html   the document being built
-	 * @param report the analysis
-	 */
 	private static void appendSummary(StringBuilder html, CombinedReport report) {
 		html.append("<section aria-labelledby=\"summary-heading\">\n")
 				.append("<h2 id=\"summary-heading\">Summary</h2>\n<ul class=\"tiles\">\n");
@@ -131,12 +122,6 @@ public final class HtmlReport {
 		html.append("</section>\n");
 	}
 
-	/**
-	 * @param html    the document being built
-	 * @param value   the number to show
-	 * @param label   what it counts
-	 * @param variant a severity class, or {@code null}
-	 */
 	private static void tile(StringBuilder html, long value, String label, String variant) {
 		html.append("<li class=\"tile").append(variant == null ? "" : " " + variant).append("\">")
 				.append("<span class=\"tile-value\">").append(value).append("</span>")
@@ -144,10 +129,6 @@ public final class HtmlReport {
 				.append("</li>\n");
 	}
 
-	/**
-	 * @param html   the document being built
-	 * @param report the analysis
-	 */
 	private static void appendShared(StringBuilder html, CombinedReport report) {
 		html.append("<section aria-labelledby=\"shared-heading\">\n")
 				.append("<h2 id=\"shared-heading\">Shared across pages</h2>\n");
@@ -169,10 +150,6 @@ public final class HtmlReport {
 		html.append("</section>\n");
 	}
 
-	/**
-	 * @param html   the document being built
-	 * @param report the analysis
-	 */
 	private static void appendUnique(StringBuilder html, CombinedReport report) {
 		html.append("<section aria-labelledby=\"unique-heading\">\n")
 				.append("<h2 id=\"unique-heading\">Specific to one page</h2>\n");
@@ -190,12 +167,6 @@ public final class HtmlReport {
 		html.append("</section>\n");
 	}
 
-	/**
-	 * @param html       the document being built
-	 * @param group      the rule to render
-	 * @param totalPages how many pages were scanned
-	 * @param shared     whether this rule spans pages
-	 */
 	private static void appendRule(StringBuilder html, RuleGroup group, int totalPages, boolean shared) {
 		String severity = severityName(group.type());
 
@@ -217,11 +188,7 @@ public final class HtmlReport {
 				.append(group.totalOccurrences() == 1 ? " occurrence" : " occurrences")
 				.append("</span>\n</summary>\n");
 
-		html.append("<p class=\"rule-code\"><code>").append(escape(group.code())).append("</code>");
-		if (!group.engine().isBlank()) {
-			html.append(" &middot; ").append(escape(group.engine()));
-		}
-		html.append("</p>\n");
+		html.append("<p class=\"rule-code\"><code>").append(escape(group.code())).append("</code></p>\n");
 
 		html.append("<table>\n<caption>Where it occurs</caption>\n<thead>\n<tr>")
 				.append("<th scope=\"col\">Page</th>")
@@ -245,10 +212,6 @@ public final class HtmlReport {
 		html.append("</details>\n");
 	}
 
-	/**
-	 * @param issues the occurrences on one page
-	 * @return their selectors as escaped HTML, truncated if there are many
-	 */
 	private static String selectors(List<Issue> issues) {
 		StringBuilder rendered = new StringBuilder();
 		int shown = Math.min(issues.size(), SELECTORS_SHOWN);
@@ -272,10 +235,6 @@ public final class HtmlReport {
 		return rendered.length() == 0 ? "<span class=\"more\">no selector reported</span>" : rendered.toString();
 	}
 
-	/**
-	 * @param group the rule
-	 * @return the HTML of its first occurrence, or an empty string
-	 */
 	private static String firstContext(RuleGroup group) {
 		for (PageOccurrences occurrence : group.pages()) {
 			for (Issue issue : occurrence.issues()) {
@@ -287,10 +246,6 @@ public final class HtmlReport {
 		return "";
 	}
 
-	/**
-	 * @param html   the document being built
-	 * @param report the analysis
-	 */
 	private static void appendPages(StringBuilder html, CombinedReport report) {
 		html.append("<section aria-labelledby=\"pages-heading\">\n")
 				.append("<h2 id=\"pages-heading\">Pages</h2>\n");
@@ -319,10 +274,6 @@ public final class HtmlReport {
 		html.append("</tbody>\n</table>\n</section>\n");
 	}
 
-	/**
-	 * @param type the severity
-	 * @return a word for it, so severity is never carried by colour alone
-	 */
 	private static String severityName(IssueType type) {
 		return switch (type) {
 			case ERROR -> "Error";
@@ -361,138 +312,58 @@ public final class HtmlReport {
 		return escaped.toString();
 	}
 
+	/** Inlined rather than linked: the report is emailed and archived, so it cannot fetch anything. */
 	private static final String STYLES = """
-			:root {
-			  color-scheme: light dark;
-			  --bg: #ffffff;
-			  --surface: #f6f7f9;
-			  --border: #d7dbe0;
-			  --text: #16191d;
-			  --muted: #5b6470;
-			  --accent: #0b5cad;
-			  --error: #a3231d;
-			  --error-bg: #fdeceb;
-			  --warning: #7a5300;
-			  --warning-bg: #fdf3dd;
-			  --notice: #2b4a6f;
-			  --notice-bg: #eaf1f9;
-			}
-			@media (prefers-color-scheme: dark) {
-			  :root {
-			    --bg: #14171a;
-			    --surface: #1d2126;
-			    --border: #333a42;
-			    --text: #e9ecef;
-			    --muted: #a3acb8;
-			    --accent: #7ab4f0;
-			    --error: #ff9b94;
-			    --error-bg: #3a1e1c;
-			    --warning: #f0c76b;
-			    --warning-bg: #382e13;
-			    --notice: #9dc2ec;
-			    --notice-bg: #1c2a3a;
-			  }
-			}
-			* { box-sizing: border-box; }
-			body {
-			  margin: 0;
-			  padding: 0 16px 64px;
-			  background: var(--bg);
-			  color: var(--text);
-			  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-			}
-			header, main { max-width: 68rem; margin: 0 auto; }
-			header { padding: 32px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
-			h1 { font-size: 1.75rem; margin: 0 0 4px; }
-			h2 { font-size: 1.25rem; margin: 40px 0 8px; }
-			.meta, .note { color: var(--muted); margin: 0 0 8px; }
-			.note { max-width: 58rem; }
-			.clean { color: var(--muted); font-weight: 600; }
-			a { color: var(--accent); }
-			:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+				:root { color-scheme: light dark; --bg:#ffffff; --surface:#f6f7f9; --border:#d7dbe0; --text:#16191d; --muted:#5b6470; --accent:#0b5cad; --error:#a3231d; --error-bg:#fdeceb; --warning:#7a5300; --warning-bg:#fdf3dd; --notice:#2b4a6f; --notice-bg:#eaf1f9; }
+				@media (prefers-color-scheme: dark) { :root { --bg:#14171a; --surface:#1d2126; --border:#333a42; --text:#e9ecef; --muted:#a3acb8; --accent:#7ab4f0; --error:#ff9b94; --error-bg:#3a1e1c; --warning:#f0c76b; --warning-bg:#382e13; --notice:#9dc2ec; --notice-bg:#1c2a3a; } }
+				* { box-sizing: border-box; }
+				body { margin:0; padding:0 16px 64px; background:var(--bg); color:var(--text); font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+				header, main { max-width:68rem; margin:0 auto; }
+				header { padding:32px 0 8px; border-bottom:1px solid var(--border); margin-bottom:8px; }
+				h1 { font-size:1.75rem; margin:0 0 4px; }
+				h2 { font-size:1.25rem; margin:40px 0 8px; }
+				.meta, .note { color:var(--muted); margin:0 0 8px; }
+				.note { max-width:58rem; }
+				.clean { color:var(--muted); font-weight:600; }
+				a { color:var(--accent); }
+				:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
 
-			.tiles { display: flex; flex-wrap: wrap; gap: 12px; list-style: none; padding: 0; margin: 16px 0 0; }
-			.tile {
-			  flex: 1 1 8.5rem;
-			  background: var(--surface);
-			  border: 1px solid var(--border);
-			  border-radius: 8px;
-			  padding: 12px 14px;
-			  display: flex;
-			  flex-direction: column;
-			  gap: 2px;
-			}
-			.tile-value { font-size: 1.75rem; font-weight: 700; line-height: 1.1; }
-			.tile-label { color: var(--muted); font-size: 0.85rem; }
-			.tile.error .tile-value { color: var(--error); }
-			.tile.warning .tile-value { color: var(--warning); }
+				.tiles { display:flex; flex-wrap:wrap; gap:12px; list-style:none; padding:0; margin:16px 0 0; }
+				.tile { flex:1 1 8.5rem; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
+				.tile-value { font-size:1.75rem; font-weight:700; line-height:1.1; }
+				.tile-label { color:var(--muted); font-size:0.85rem; }
+				.tile.error .tile-value { color:var(--error); }
+				.tile.warning .tile-value { color:var(--warning); }
 
-			details.rule {
-			  border: 1px solid var(--border);
-			  border-left: 4px solid var(--muted);
-			  border-radius: 6px;
-			  background: var(--surface);
-			  margin: 10px 0;
-			  padding: 0;
-			}
-			details.rule.error { border-left-color: var(--error); }
-			details.rule.warning { border-left-color: var(--warning); }
-			details.rule.notice { border-left-color: var(--notice); }
-			summary {
-			  cursor: pointer;
-			  padding: 12px 14px;
-			  display: grid;
-			  grid-template-columns: auto 1fr;
-			  grid-template-areas: "badge message" "badge scope";
-			  gap: 2px 10px;
-			  align-items: start;
-			}
-			summary::marker { color: var(--muted); }
-			.badge {
-			  grid-area: badge;
-			  align-self: center;
-			  font-size: 0.72rem;
-			  font-weight: 700;
-			  text-transform: uppercase;
-			  letter-spacing: 0.04em;
-			  padding: 3px 8px;
-			  border-radius: 999px;
-			  white-space: nowrap;
-			}
-			.error .badge { background: var(--error-bg); color: var(--error); }
-			.warning .badge { background: var(--warning-bg); color: var(--warning); }
-			.notice .badge, .unknown .badge { background: var(--notice-bg); color: var(--notice); }
-			.rule-message { grid-area: message; font-weight: 600; }
-			.rule-scope { grid-area: scope; color: var(--muted); font-size: 0.85rem; }
-			.rule-code { margin: 0 14px 10px; color: var(--muted); font-size: 0.85rem; }
+				details.rule { border:1px solid var(--border); border-left:4px solid var(--muted); border-radius:6px; background:var(--surface); margin:10px 0; padding:0; }
+				details.rule.error { border-left-color:var(--error); }
+				details.rule.warning { border-left-color:var(--warning); }
+				details.rule.notice { border-left-color:var(--notice); }
+				summary { cursor:pointer; padding:12px 14px; display:grid; grid-template-columns:auto 1fr; grid-template-areas:"badge message" "badge scope"; gap:2px 10px; align-items:start; }
+				summary::marker { color:var(--muted); }
+				.badge { grid-area:badge; align-self:center; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; white-space:nowrap; }
+				.error .badge { background:var(--error-bg); color:var(--error); }
+				.warning .badge { background:var(--warning-bg); color:var(--warning); }
+				.notice .badge, .unknown .badge { background:var(--notice-bg); color:var(--notice); }
+				.rule-message { grid-area:message; font-weight:600; }
+				.rule-scope { grid-area:scope; color:var(--muted); font-size:0.85rem; }
+				.rule-code { margin:0 14px 10px; color:var(--muted); font-size:0.85rem; }
 
-			table { border-collapse: collapse; width: calc(100% - 28px); margin: 0 14px 14px; font-size: 0.9rem; }
-			section > table { width: 100%; margin: 16px 0 0; }
-			caption { text-align: left; color: var(--muted); font-size: 0.85rem; padding-bottom: 6px; }
-			th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-			thead th { border-bottom: 2px solid var(--border); white-space: nowrap; }
-			tbody th { font-weight: 600; white-space: nowrap; }
-			.numeric { text-align: right; font-variant-numeric: tabular-nums; }
-			.url { color: var(--muted); word-break: break-all; }
-			.more { color: var(--muted); font-size: 0.85rem; }
+				table { border-collapse:collapse; width:calc(100% - 28px); margin:0 14px 14px; font-size:0.9rem; }
+				section > table { width:100%; margin:16px 0 0; }
+				caption { text-align:left; color:var(--muted); font-size:0.85rem; padding-bottom:6px; }
+				th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+				thead th { border-bottom:2px solid var(--border); white-space:nowrap; }
+				tbody th { font-weight:600; white-space:nowrap; }
+				.numeric { text-align:right; font-variant-numeric:tabular-nums; }
+				.url { color:var(--muted); word-break:break-all; }
+				.more { color:var(--muted); font-size:0.85rem; }
 
-			code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 0.85em; }
-			td code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; display: inline-block; margin: 1px 0; }
-			.context-label { margin: 0 14px 4px; color: var(--muted); font-size: 0.85rem; }
-			pre.context {
-			  margin: 0 14px 14px;
-			  padding: 10px 12px;
-			  background: var(--bg);
-			  border: 1px solid var(--border);
-			  border-radius: 6px;
-			  overflow-x: auto;
-			  white-space: pre-wrap;
-			  word-break: break-word;
-			}
+				code { font-family:ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size:0.85em; }
+				td code { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:1px 5px; display:inline-block; margin:1px 0; }
+				.context-label { margin:0 14px 4px; color:var(--muted); font-size:0.85rem; }
+				pre.context { margin:0 14px 14px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; }
 
-			@media print {
-			  body { padding: 0; }
-			  details.rule { break-inside: avoid; }
-			}
-			""";
+				@media print { body { padding:0; } details.rule { break-inside:avoid; } }
+				""";
 }

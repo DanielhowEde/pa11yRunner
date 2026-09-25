@@ -101,9 +101,6 @@ class LiveScanTest {
 		assertEquals(FailureKind.NAVIGATION_FAILED, thrown.kind());
 	}
 
-	/**
-	 * @return a runner configured from the environment
-	 */
 	private static Pa11yRunner runner() {
 		return Pa11yRunner.builder().debug(true).build();
 	}

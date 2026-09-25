@@ -81,20 +81,29 @@ class Pa11yCliTest {
 	@Test
 	@DisplayName("malformed viewport, header, standard and engine values are explained")
 	void explainsMalformedValues() {
-		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--viewport", "wide"));
-		assertTrue(errors().contains("WIDTHxHEIGHT"), errors());
-
-		reset();
-		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--header", "no-separator"));
-		assertTrue(errors().contains("NAME:VALUE"), errors());
-
-		reset();
 		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--standard", "WCAG9"));
 		assertTrue(errors().contains("Unknown standard"), errors());
 
 		reset();
-		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--engine", "lighthouse"));
-		assertTrue(errors().contains("Unknown engine"), errors());
+		assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", "--timeout", "soon"));
+		assertTrue(errors().contains("expects a number"), errors());
+	}
+
+	@Test
+	@DisplayName("options that were dropped are rejected, not quietly ignored")
+	void droppedOptionsAreRejected() {
+		// Silently accepting one of these would be the worst outcome: the run would look
+		// configured and would not be. --engine is gone because scans run HTML CodeSniffer
+		// and nothing else; the rest only ever applied when loading a URL.
+		for (String[] gone : new String[][] {
+				{ "--engine", "axe" },
+				{ "--header", "Authorization: Bearer x" },
+				{ "--viewport", "1280x1024" },
+				{ "--screenshot", "page.png" } }) {
+			reset();
+			assertEquals(Pa11yCli.EXIT_USAGE, run("scan", "--name", "a", gone[0], gone[1]), gone[0]);
+			assertTrue(errors().contains("Unknown option"), gone[0] + ": " + errors());
+		}
 	}
 
 	@Test
@@ -116,10 +125,6 @@ class Pa11yCliTest {
 		assertTrue(errors().contains("No page reports found"), errors());
 	}
 
-	/**
-	 * @param args the command line
-	 * @return the exit code
-	 */
 	private int run(String... args) {
 		return Pa11yCli.run(args,
 				new PrintStream(out, true, StandardCharsets.UTF_8),

@@ -1,7 +1,9 @@
 package com.automation.pa11y.internal;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -9,8 +11,12 @@ import java.util.Map;
  * The JSON the scanner script writes, mapped one-to-one.
  *
  * <p>Kept separate from {@link com.automation.pa11y.ScanResult} so that the shape on the
- * wire can change without dragging the public API along with it. Unknown fields are ignored
- * so that a newer scanner script never breaks an older jar.
+ * wire can change without dragging the public API along with it.
+ *
+ * <p>Unknown fields are ignored, so a newer scanner script never breaks an older jar. That is
+ * configured on the reader in {@link NodeScanner} rather than with {@code @JsonIgnoreProperties}
+ * here: the annotation would be this project's only use of jackson-annotations, and depending on
+ * a whole artifact for one annotation is not worth it.
  *
  * @param status         {@code COMPLETED} or {@code FAILED}
  * @param failureKind    why it failed; only set when {@code status} is {@code FAILED}
@@ -20,7 +26,6 @@ import java.util.Map;
  * @param durationMillis how long the scan took
  * @param issues         what was found
  */
-@JsonIgnoreProperties(ignoreUnknown = true)
 public record ScanResponse(
 		String status,
 		String failureKind,
@@ -32,6 +37,24 @@ public record ScanResponse(
 
 	/** The status the script reports for a scan that ran, however many issues it found. */
 	public static final String COMPLETED = "COMPLETED";
+
+	/**
+	 * Unknown fields are ignored, so a newer scanner script never breaks an older jar. Done
+	 * here rather than with {@code @JsonIgnoreProperties} on the record, which would make
+	 * jackson-annotations a second Jackson artifact to depend on for the sake of one
+	 * annotation.
+	 */
+	private static final ObjectMapper MAPPER = new ObjectMapper()
+			.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+	/**
+	 * @param json what the scanner script wrote
+	 * @return the parsed response
+	 * @throws IOException if it is not readable as a response
+	 */
+	public static ScanResponse parse(String json) throws IOException {
+		return MAPPER.readValue(json, ScanResponse.class);
+	}
 
 	/**
 	 * @return {@code true} if the scan ran
@@ -59,7 +82,6 @@ public record ScanResponse(
 	 * @param runner       the engine that found it
 	 * @param runnerExtras engine-specific detail
 	 */
-	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record WireIssue(
 			String code,
 			String type,

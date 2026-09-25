@@ -28,11 +28,6 @@ import java.util.Map;
  */
 public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, List<RuleGroup> unique) {
 
-	/**
-	 * @param pages  the pages that were read
-	 * @param shared rules that appear on more than one page
-	 * @param unique rules that appear on exactly one page
-	 */
 	public CombinedReport {
 		pages = pages == null ? List.of() : List.copyOf(pages);
 		shared = shared == null ? List.of() : List.copyOf(shared);
@@ -106,7 +101,6 @@ public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, Lis
 	 * @param code             the rule identifier
 	 * @param type             the severity, taken from the first occurrence
 	 * @param message          the description, taken from the first occurrence
-	 * @param engine           which engine reported it
 	 * @param pages            the pages it fired on, most occurrences first
 	 * @param totalOccurrences how many times it fired in total
 	 */
@@ -114,7 +108,6 @@ public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, Lis
 			String code,
 			IssueType type,
 			String message,
-			String engine,
 			List<PageOccurrences> pages,
 			int totalOccurrences) {
 
@@ -180,7 +173,7 @@ public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, Lis
 			occurrences.sort(Comparator
 					.comparingInt(PageOccurrences::count).reversed()
 					.thenComparing(PageOccurrences::pageName));
-			return new RuleGroup(code, first.type(), first.message(), first.engine(), List.copyOf(occurrences), total);
+			return new RuleGroup(code, first.type(), first.message(), List.copyOf(occurrences), total);
 		}
 	}
 }

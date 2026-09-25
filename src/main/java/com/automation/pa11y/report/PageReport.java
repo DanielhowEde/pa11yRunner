@@ -25,7 +25,7 @@ import java.util.Objects;
  * @param scannedAt      when the scan ran
  * @param duration       how long it took
  * @param standard       the standard tested against
- * @param engines        the engines that ran
+ * @param engines        which Pa11y runners produced these issues, recorded for provenance
  * @param issues         what was found
  */
 public record PageReport(
@@ -39,17 +39,6 @@ public record PageReport(
 		List<String> engines,
 		List<Issue> issues) {
 
-	/**
-	 * @param name           the short name this page was scanned under
-	 * @param requestedUrl   the URL that was asked for
-	 * @param pageUrl        the URL actually scanned
-	 * @param documentTitle  the page's title
-	 * @param scannedAt      when the scan ran
-	 * @param duration       how long it took
-	 * @param standard       the standard tested against
-	 * @param engines        the engines that ran
-	 * @param issues         what was found
-	 */
 	public PageReport {
 		name = Objects.requireNonNullElse(name, "");
 		requestedUrl = Objects.requireNonNullElse(requestedUrl, "");
@@ -77,7 +66,7 @@ public record PageReport(
 				Instant.now(),
 				result.duration(),
 				request.standard().wireName(),
-				request.engines().stream().map(engine -> engine.wireName()).toList(),
+				List.of(ScanRequest.ENGINE),
 				result.issues());
 	}
 

@@ -65,11 +65,6 @@ class ScannerLocationTest {
 		assertTrue(thrown.getMessage().contains("node_modules"), thrown.getMessage());
 	}
 
-	/**
-	 * @param scanner where to build a stand-in install
-	 * @return the scanner directory
-	 * @throws IOException if it cannot be created
-	 */
 	private static Path installedScannerAt(Path scanner) throws IOException {
 		Files.createDirectories(scanner.resolve("node_modules").resolve("pa11y"));
 		return scanner;

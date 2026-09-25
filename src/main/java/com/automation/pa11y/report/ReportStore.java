@@ -117,9 +117,6 @@ public final class ReportStore {
 		return new CleanResult(List.copyOf(deleted), List.copyOf(kept));
 	}
 
-	/**
-	 * @return every {@code .json} file in the directory, sorted by name
-	 */
 	private List<Path> jsonFiles() {
 		if (!Files.isDirectory(directory)) {
 			return List.of();
@@ -138,10 +135,6 @@ public final class ReportStore {
 		return files;
 	}
 
-	/**
-	 * @param file a candidate file
-	 * @return its parsed contents, or {@code null} if it is not one of ours
-	 */
 	private static JsonNode readIfReport(Path file) {
 		try {
 			JsonNode root = MAPPER.readTree(Files.readString(file, StandardCharsets.UTF_8));
@@ -177,10 +170,6 @@ public final class ReportStore {
 		return slug.isEmpty() ? "page" : slug;
 	}
 
-	/**
-	 * @param report the page to serialise
-	 * @return it as JSON
-	 */
 	private static ObjectNode toJson(PageReport report) {
 		ObjectNode root = MAPPER.createObjectNode();
 		root.put("generator", GENERATOR);
@@ -214,11 +203,6 @@ public final class ReportStore {
 		return root;
 	}
 
-	/**
-	 * @param root the parsed file
-	 * @param file where it came from, for the error message
-	 * @return the page report
-	 */
 	private static PageReport fromJson(JsonNode root, Path file) {
 		List<Issue> issues = new ArrayList<>();
 		JsonNode issueNodes = root.get("issues");
@@ -255,20 +239,11 @@ public final class ReportStore {
 				issues);
 	}
 
-	/**
-	 * @param node  the object to read from
-	 * @param field the field name
-	 * @return the field's text, or an empty string
-	 */
 	private static String text(JsonNode node, String field) {
 		JsonNode value = node.get(field);
 		return value == null || value.isNull() ? "" : value.asText();
 	}
 
-	/**
-	 * @param value an ISO-8601 timestamp, possibly missing or malformed
-	 * @return the instant, or the epoch if it cannot be read
-	 */
 	private static Instant instant(String value) {
 		try {
 			return value.isBlank() ? Instant.EPOCH : Instant.parse(value);

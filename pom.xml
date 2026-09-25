@@ -39,7 +39,6 @@
 
         <maven.compiler.release>${java.release}</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <jackson.version>2.18.2</jackson.version>
         <junit.version>5.11.4</junit.version>
@@ -62,9 +61,18 @@
             <version>${jackson.version}</version>
         </dependency>
 
+        <!--
+            The api alone, not the junit-jupiter aggregator. The tests import nothing else, and
+            Surefire supplies the engine itself: it sees junit-jupiter-api among the test
+            dependencies, resolves the matching junit-jupiter-engine, and puts it on its own
+            provider classpath rather than the project's. Verified: all tests run with this.
+
+            If you ever run these tests with something that does not provision an engine, swap
+            this for the `junit-jupiter` aggregator, which bundles api + engine + params.
+        -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>junit-jupiter-api</artifactId>
             <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
