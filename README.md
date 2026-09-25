@@ -251,22 +251,6 @@ To save a page for the combined report from Java rather than through the CLI:
 new ReportStore(Path.of("target/pa11y-reports")).write(PageReport.of("checkout", request, result));
 ```
 
-### The engine
-
-Scans run **HTML CodeSniffer** and nothing else. Pa11y can also run axe-core; that is deliberately
-not offered here, so there is no `--engine` flag and no engine to choose. A script still passing
-`--engine` is told the option is unknown rather than having it quietly ignored.
-
-Note that the `axe-core` npm package stays in `scanner/node_modules` regardless — Pa11y declares it
-as a dependency of its own, so it cannot be removed while depending on Pa11y. It is never loaded,
-because Pa11y only requires a runner when that runner is asked for. If the goal was to get the
-package itself off disk rather than out of the results, that needs a different approach and is
-worth saying so.
-
-Restoring the choice later means sending more than one name in the `runners` array the scanner
-script is given, and deciding what a shared rule means in the combined report: it groups by rule
-code, and the two engines do not share a code for the same defect.
-
 ### Scan options
 
 Available on both the CLI and the builder. There is no option for request headers, viewport size,

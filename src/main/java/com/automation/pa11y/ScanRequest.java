@@ -51,13 +51,9 @@ public record ScanRequest(
 	public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
 	/**
-	 * The Pa11y runner every scan uses.
-	 *
-	 * <p>Pa11y can also run axe-core, and this used to be selectable. It is not any more:
-	 * there is one engine, and it is the one {@link Standard} applies to. Restoring the choice
-	 * means sending more than one name in the {@code runners} array the scanner script is
-	 * given, and deciding what a rule code means when two engines report the same defect
-	 * differently -- the combined report groups by code, and the two engines do not share one.
+	 * The Pa11y runner every scan uses: HTML CodeSniffer, which is what {@link Standard}
+	 * applies to. There is no choice of engine, so the combined report can group findings by
+	 * rule code and have that mean one thing.
 	 */
 	public static final String ENGINE = "htmlcs";
 

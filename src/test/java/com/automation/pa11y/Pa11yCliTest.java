@@ -93,10 +93,10 @@ class Pa11yCliTest {
 	@DisplayName("options that were dropped are rejected, not quietly ignored")
 	void droppedOptionsAreRejected() {
 		// Silently accepting one of these would be the worst outcome: the run would look
-		// configured and would not be. --engine is gone because scans run HTML CodeSniffer
-		// and nothing else; the rest only ever applied when loading a URL.
+		// configured and would not be. --engine is gone because there is only one engine;
+		// the rest only ever applied when loading a URL.
 		for (String[] gone : new String[][] {
-				{ "--engine", "axe" },
+				{ "--engine", "htmlcs" },
 				{ "--header", "Authorization: Bearer x" },
 				{ "--viewport", "1280x1024" },
 				{ "--screenshot", "page.png" } }) {
