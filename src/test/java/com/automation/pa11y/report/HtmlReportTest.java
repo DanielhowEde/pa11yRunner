@@ -1,7 +1,9 @@
 package com.automation.pa11y.report;
 
+import com.automation.pa11y.FailureKind;
 import com.automation.pa11y.Issue;
 import com.automation.pa11y.IssueType;
+import com.automation.pa11y.ScanRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -93,6 +95,47 @@ class HtmlReportTest {
 
 		assertTrue(html.contains("Release &lt;4.2&gt;"), html);
 		assertFalse(html.contains("Release <4.2>"), html);
+	}
+
+	@Test
+	@DisplayName("a failed scan is reported as a failure, never as a page with nothing wrong")
+	void showsFailedScansProminently() {
+		CombinedReport report = CombinedReport.from(List.of(
+				page("dashboard"),
+				PageReport.failed("users", ScanRequest.currentPage().build(),
+						FailureKind.CHROME_UNREACHABLE, "nothing was listening on port 9222")));
+
+		String html = HtmlReport.render(report, "Report");
+
+		assertTrue(html.contains("Scans that did not run"), html);
+		assertTrue(html.contains("not measured"), "the report must say the page was not measured");
+		assertTrue(html.contains("CHROME_UNREACHABLE"), html);
+		assertTrue(html.contains("nothing was listening on port 9222"), html);
+		assertTrue(html.contains("scans that failed"), "the summary must count the failure");
+		assertFalse(html.contains("No issues were found on any page scanned"),
+				"a run with an unmeasured page must never be described as clean");
+	}
+
+	@Test
+	@DisplayName("a run where every page was measured and found clean still says so")
+	void stillReportsAGenuinelyCleanRun() {
+		String html = HtmlReport.render(CombinedReport.from(List.of(page("dashboard"))), "Report");
+
+		assertTrue(html.contains("No issues were found on any page scanned"), html);
+		assertFalse(html.contains("Scans that did not run"), html);
+	}
+
+	@Test
+	@DisplayName("a failure message from the page under test is escaped like everything else")
+	void escapesFailureDetail() {
+		CombinedReport report = CombinedReport.from(List.of(
+				PageReport.failed("users", ScanRequest.currentPage().build(),
+						FailureKind.SCAN_ERROR, "<img src=x onerror=alert(1)>")));
+
+		String html = HtmlReport.render(report, "Report");
+
+		assertFalse(html.contains("<img src=x"), "the snippet must not survive as markup");
+		assertTrue(html.contains("&lt;img src=x"), html);
 	}
 
 	private static PageReport page(String name, Issue... issues) {

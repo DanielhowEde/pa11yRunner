@@ -1,17 +1,23 @@
 package com.automation.pa11y.cli;
 
+import com.automation.pa11y.FailureKind;
 import com.automation.pa11y.Pa11yCli;
+import com.automation.pa11y.Pa11yConfig;
 import com.automation.pa11y.Pa11yException;
 import com.automation.pa11y.Pa11yRunner;
+import com.automation.pa11y.ScanFailedException;
 import com.automation.pa11y.ScanRequest;
 import com.automation.pa11y.ScanResult;
 import com.automation.pa11y.Standard;
+import com.automation.pa11y.report.CombinedReport;
+import com.automation.pa11y.report.HtmlReport;
 import com.automation.pa11y.report.PageReport;
 import com.automation.pa11y.report.ReportStore;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -28,7 +34,8 @@ public final class ScanCommand {
 
 	private static final Set<String> OPTIONS = Set.of(
 			"--chrome", "--name", "--url", "--reports-dir", "--scanner-dir", "--standard",
-			"--timeout", "--wait", "--root-element", "--hide-elements", "--ignore", "--action");
+			"--timeout", "--wait", "--root-element", "--hide-elements", "--ignore", "--action",
+			"--config");
 
 	private ScanCommand() {
 	}
@@ -49,11 +56,25 @@ public final class ScanCommand {
 			return usageError(e, err);
 		}
 
+		Pa11yConfig config;
+		try {
+			config = Pa11yCli.configFor(command);
+		} catch (Pa11yException e) {
+			// A broken config file is a wrong input rather than a scan that could not run, so
+			// it exits 2 like any other argument problem. No usage dump: the message already
+			// names the file, the key and what was expected.
+			err.println(e.getMessage());
+			return Pa11yCli.EXIT_USAGE;
+		}
+
 		ScanRequest request;
 		Pa11yRunner runner;
 		try {
-			request = buildRequest(command);
-			Pa11yRunner.Builder builder = Pa11yRunner.builder().debug(command.has("--debug"));
+			request = buildRequest(command, config);
+			Pa11yRunner.Builder builder = Pa11yRunner.builder(config);
+			if (command.has("--debug")) {
+				builder.debug(true);
+			}
 			if (command.has("--chrome")) {
 				builder.chromeDebuggerUrl(command.value("--chrome", null));
 			}
@@ -68,12 +89,27 @@ public final class ScanCommand {
 			return Pa11yCli.EXIT_SCAN_FAILED;
 		}
 
+		Path directory = Pa11yCli.reportsDirectory(command, config);
+
 		ScanResult result;
-		Path saved;
 		try {
 			result = runner.scan(request);
-			saved = new ReportStore(Pa11yCli.reportsDirectory(command))
-					.write(PageReport.of(name, request, result));
+		} catch (Pa11yException e) {
+			// Recorded as a failed page before giving up, so the report step shows this page as
+			// unmeasured rather than leaving a gap that reads like a page with nothing wrong.
+			err.println(e.getMessage());
+			recordFailure(directory, name, request, e, err);
+			return Pa11yCli.EXIT_SCAN_FAILED;
+		}
+
+		Path saved;
+		try {
+			PageReport page = PageReport.of(name, request, result);
+			new ReportStore(directory).write(page);
+			saved = HtmlReport.write(
+					CombinedReport.from(List.of(page)),
+					page.displayTitle() + " accessibility report",
+					directory.resolve(ReportStore.htmlFileName(name)));
 		} catch (Pa11yException e) {
 			err.println(e.getMessage());
 			return Pa11yCli.EXIT_SCAN_FAILED;
@@ -89,24 +125,70 @@ public final class ScanCommand {
 				: Pa11yCli.EXIT_CLEAN;
 	}
 
-	private static ScanRequest buildRequest(CommandLine command) {
+	/**
+	 * Starts from the config file and lets the command line override it.
+	 *
+	 * <p>Each option is applied only when it was actually given, which is the whole point:
+	 * setting it unconditionally would mean the flag's own default silently replacing what
+	 * the project wrote down, and {@code --standard} would be the only standard anyone could
+	 * ever get.
+	 *
+	 * <p>{@code --ignore} and {@code --action} add to the config's lists instead of replacing
+	 * them, and run after them. A page that needs one extra click still needs the cookie
+	 * banner clicked first.
+	 */
+	private static ScanRequest buildRequest(CommandLine command, Pa11yConfig config) {
 		// No --url means the page is already on screen, which is the normal case when a suite
 		// has navigated and now wants it checked.
 		ScanRequest.Builder builder = command.has("--url")
-				? ScanRequest.forUrl(command.value("--url", null))
-				: ScanRequest.currentPage();
+				? config.forUrl(command.value("--url", null))
+				: config.currentPage();
 
+		if (command.has("--standard")) {
+			builder.standard(Standard.fromWireName(command.value("--standard", null)));
+		}
+		if (command.has("--include-warnings")) {
+			builder.includeWarnings(true);
+		}
+		if (command.has("--include-notices")) {
+			builder.includeNotices(true);
+		}
+		if (command.has("--timeout")) {
+			builder.timeout(Duration.ofSeconds(command.number("--timeout", 60)));
+		}
+		if (command.has("--wait")) {
+			builder.waitAfterLoad(Duration.ofMillis(command.number("--wait", 0)));
+		}
+		if (command.has("--root-element")) {
+			builder.rootElement(command.value("--root-element", null));
+		}
+		if (command.has("--hide-elements")) {
+			builder.hideElements(command.value("--hide-elements", null));
+		}
 		return builder
-				.standard(standard(command.value("--standard", "WCAG2AA")))
-				.includeWarnings(command.has("--include-warnings"))
-				.includeNotices(command.has("--include-notices"))
-				.timeout(Duration.ofSeconds(command.number("--timeout", 60)))
-				.waitAfterLoad(Duration.ofMillis(command.number("--wait", 0)))
-				.rootElement(command.value("--root-element", null))
-				.hideElements(command.value("--hide-elements", null))
 				.ignore(command.all("--ignore").toArray(String[]::new))
 				.actions(command.all("--action").toArray(String[]::new))
 				.build();
+	}
+
+	/**
+	 * Saves the fact that this page was not measured.
+	 *
+	 * <p>Failing to save it is not worth failing the command over: the scan has already
+	 * failed, the exit code already says so, and a second error message about the record of
+	 * the first one would only bury it.
+	 */
+	private static void recordFailure(Path directory, String name, ScanRequest request,
+			Pa11yException failure, PrintStream err) {
+		FailureKind kind = failure instanceof ScanFailedException scan
+				? scan.kind()
+				: FailureKind.SCAN_ERROR;
+		try {
+			new ReportStore(directory).write(
+					PageReport.failed(name, request, kind, failure.getMessage()));
+		} catch (Pa11yException e) {
+			err.println("The failure could not be recorded in " + directory + ": " + e.getMessage());
+		}
 	}
 
 	private static int usageError(IllegalArgumentException failure, PrintStream err) {
@@ -116,21 +198,12 @@ public final class ScanCommand {
 		return Pa11yCli.EXIT_USAGE;
 	}
 
-	private static Standard standard(String value) {
-		for (Standard candidate : Standard.values()) {
-			if (candidate.wireName().equalsIgnoreCase(value)) {
-				return candidate;
-			}
-		}
-		throw new IllegalArgumentException("Unknown standard '" + value + "'. Use WCAG2A, WCAG2AA or WCAG2AAA.");
-	}
-
 	/**
 	 * @return the help text for this subcommand
 	 */
 	public static String usage() {
 		return """
-				pa11y-runner scan -- scan one page and save it
+				pa11y-runner scan -- scan one page and save its HTML report
 
 				Usage:
 				  pa11y-runner scan --name <name> [--chrome <endpoint>] [options]
@@ -139,15 +212,17 @@ public final class ScanCommand {
 				navigated there: nothing is reloaded, so the page is measured as the test left it.
 
 				Required:
-				  --name <name>            What to call this page. Becomes <name>.json in the reports
-				                           directory, and labels the page in the combined report.
+				  --name <name>            Page name. Becomes <name>.html in the reports directory.
 
 				Connection:
-				  --chrome <endpoint>      Chrome's debugger on the Grid node: grid-node-3:9222,
-				                           http://grid-node-3:9222, or a ws:// URL. Defaults to the
-				                           PA11Y_CHROME_URL environment variable.
-				  --reports-dir <dir>      Where to save. Default 'pa11y-reports', or PA11Y_REPORTS_DIR.
+				  --chrome <endpoint>      Selenium Grid session CDP WebSocket, for example
+				                           ws://grid:4444/session/${SESSION_ID}/se/cdp. Defaults to
+				                           PA11Y_CHROME_URL.
+				  --reports-dir <dir>      Where to save. Default ~/target/pa11yReports, or
+				                           PA11Y_REPORTS_DIR.
 				  --scanner-dir <dir>      Directory holding the scanner's node_modules.
+				  --config <file>          Read defaults from this file, instead of looking for a
+				                           pa11yConfig.json in the working directory and above.
 
 				What to scan:
 				  --url <url>              Load this URL in a new tab instead of scanning the open one.
@@ -168,6 +243,11 @@ public final class ScanCommand {
 				  --fail-on-error          Exit 1 when the page has errors. Off by default, because
 				                           at scan time the question is whether the scan worked; what
 				                           the pages contain is what the report is for.
-				  --debug                  Log what the scanner is doing.""";
+				  --debug                  Log what the scanner is doing.
+
+				A pa11yConfig.json in the base directory supplies defaults for the scan options, so
+				every page in a run is judged by the same policy. Anything given here overrides it;
+				--ignore and --action add to its lists rather than replacing them. --chrome is not a
+				config setting, because the Grid CDP address is different for every session.""";
 	}
 }

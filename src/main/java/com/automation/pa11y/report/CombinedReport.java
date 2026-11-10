@@ -42,6 +42,12 @@ public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, Lis
 		Map<String, Builder> byCode = new LinkedHashMap<>();
 
 		for (PageReport page : pages) {
+			// A failed page has no issues to group, and must not be allowed to read as a page
+			// that was measured and found clean. It is carried through to be reported as a
+			// failure instead; see failedPages().
+			if (page.isFailed()) {
+				continue;
+			}
 			for (Issue issue : page.issues()) {
 				byCode.computeIfAbsent(issue.code(), code -> new Builder(code, issue)).add(page.name(), issue);
 			}
@@ -93,6 +99,41 @@ public record CombinedReport(List<PageReport> pages, List<RuleGroup> shared, Lis
 	 */
 	public boolean isSinglePage() {
 		return pages.size() < 2;
+	}
+
+	/**
+	 * The pages whose scan ran, whatever it found.
+	 *
+	 * @return the measured pages, in scan order
+	 */
+	public List<PageReport> completedPages() {
+		return pages.stream().filter(page -> !page.isFailed()).toList();
+	}
+
+	/**
+	 * The pages that were never measured.
+	 *
+	 * <p>These are the ones to look at first, and the reason this list exists separately: an
+	 * unreachable browser produces no issues, which is indistinguishable from a perfect page
+	 * if nobody keeps the two apart.
+	 *
+	 * @return the failed pages, in scan order
+	 */
+	public List<PageReport> failedPages() {
+		return pages.stream().filter(PageReport::isFailed).toList();
+	}
+
+	/**
+	 * Whether this run can honestly be called clean.
+	 *
+	 * <p>A failed scan makes the answer {@code false} even with no issues anywhere, because
+	 * nothing was learned about that page. Zero findings from a scan that did not happen is
+	 * not a result.
+	 *
+	 * @return {@code true} only if every page was measured and nothing was found
+	 */
+	public boolean isClean() {
+		return !pages.isEmpty() && failedPages().isEmpty() && totalIssues() == 0;
 	}
 
 	/**

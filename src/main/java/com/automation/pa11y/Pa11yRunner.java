@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Runs Pa11y against a page in a Chrome that something else is already driving.
@@ -26,7 +27,7 @@ import java.util.List;
  * <pre>{@code
  * // once, e.g. in a base class or a @BeforeAll
  * Pa11yRunner pa11y = Pa11yRunner.builder()
- *         .chromeDebuggerUrl("http://grid-node-3:9222")
+ *         .chromeDebuggerUrl("ws://grid:4444/session/<session-id>/se/cdp")
  *         .build();
  *
  * // in a test, after the page under test is on screen
@@ -59,7 +60,8 @@ public final class Pa11yRunner {
 	private Pa11yRunner(Builder builder, Path modulesDir) {
 		this.chromeDebuggerUrl = builder.chromeDebuggerUrl;
 		this.endpointTimeout = builder.endpointTimeout;
-		this.scanner = new NodeScanner(builder.nodeExecutable, modulesDir, builder.debug);
+		this.scanner = new NodeScanner(
+				Objects.requireNonNullElse(builder.nodeExecutable, "node"), modulesDir, builder.debug);
 	}
 
 	/**
@@ -67,6 +69,39 @@ public final class Pa11yRunner {
 	 */
 	public static Builder builder() {
 		return new Builder();
+	}
+
+	/**
+	 * A builder pre-filled from a {@code pa11yConfig.json}, for the settings that belong to a
+	 * project rather than to a run: the scanner directory, the {@code node} binary and whether
+	 * to log.
+	 *
+	 * <p>A property or environment variable still wins over the file, and anything set on the
+	 * returned builder wins over both -- so Chrome's debugger URL, which is per session and
+	 * cannot come from the file, is passed here as usual:
+	 *
+	 * <pre>{@code
+	 * Pa11yRunner pa11y = Pa11yRunner.builder(Pa11yConfig.discover())
+	 *         .chromeDebuggerUrl(cdpUrlFor(driver))
+	 *         .build();
+	 * }</pre>
+	 *
+	 * @param config the config to take defaults from; {@link Pa11yConfig#empty()} is accepted
+	 *               and changes nothing
+	 * @return a builder
+	 */
+	public static Builder builder(Pa11yConfig config) {
+		Builder builder = new Builder();
+		if (config != null) {
+			builder.scannerDirectoryFromConfig = config.scannerDir();
+			if (builder.nodeExecutable == null) {
+				builder.nodeExecutable = config.nodeExecutable();
+			}
+			// Either source may turn logging on; neither can turn it off, which matches the
+			// command line, where --debug is a switch with no opposite.
+			builder.debug = builder.debug || config.debug();
+		}
+		return builder;
 	}
 
 	/**
@@ -142,8 +177,9 @@ public final class Pa11yRunner {
 	public static final class Builder {
 
 		private String chromeDebuggerUrl = firstSet(System.getProperty(CHROME_URL_PROPERTY), System.getenv(CHROME_URL_ENV));
-		private String nodeExecutable = firstSet(System.getProperty(NODE_PROPERTY), System.getenv("PA11Y_NODE"), "node");
+		private String nodeExecutable = firstSet(System.getProperty(NODE_PROPERTY), System.getenv("PA11Y_NODE"));
 		private Path scannerDirectory;
+		private Path scannerDirectoryFromConfig;
 		private Duration endpointTimeout = Duration.ofSeconds(10);
 		private boolean debug = Boolean.getBoolean(DEBUG_PROPERTY);
 
@@ -153,9 +189,9 @@ public final class Pa11yRunner {
 		/**
 		 * Where Chrome's remote debugger is listening.
 		 *
-		 * <p>Accepts {@code http://grid-node-3:9222}, {@code grid-node-3:9222}, a bare host
-		 * or IP (port 9222 assumed), or an already-resolved {@code ws://} URL such as the
-		 * {@code se:cdp} capability from a Selenium session.
+		 * <p>For Selenium Grid, pass the session-specific CDP URL, such as
+		 * {@code ws://grid:4444/session/<session-id>/se/cdp}. An HTTP Chrome debugger endpoint
+		 * such as {@code http://localhost:9222} is also accepted for directly exposed Chrome.
 		 *
 		 * @param chromeDebuggerUrl the endpoint
 		 * @return this builder
@@ -169,8 +205,9 @@ public final class Pa11yRunner {
 		 * The directory holding the scanner's {@code node_modules}.
 		 *
 		 * <p>Optional. When it is not set, the {@code pa11y.scanner.dir} system property and
-		 * {@code PA11Y_SCANNER_DIR} environment variable are consulted, then a {@code scanner}
-		 * directory is looked for from the working directory upwards.
+		 * {@code PA11Y_SCANNER_DIR} environment variable are consulted, then the
+		 * {@code scannerDir} of any config file given to {@link #builder(Pa11yConfig)}, then a
+		 * {@code scanner} directory is looked for from the working directory upwards.
 		 *
 		 * @param scannerDirectory the scanner directory
 		 * @return this builder
@@ -217,7 +254,7 @@ public final class Pa11yRunner {
 		public Pa11yRunner build() {
 			// Located now rather than at the first scan, so a missing npm install fails in
 			// setup where it is obvious, not in the middle of a test where it looks flaky.
-			Path modulesDir = ScannerLocation.discoverModulesDir(scannerDirectory);
+			Path modulesDir = ScannerLocation.discoverModulesDir(scannerDirectory, scannerDirectoryFromConfig);
 			return new Pa11yRunner(this, modulesDir);
 		}
 

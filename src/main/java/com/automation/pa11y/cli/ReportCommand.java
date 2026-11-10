@@ -12,6 +12,7 @@ import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Combines every saved page into one HTML report.
@@ -23,7 +24,7 @@ import java.util.Set;
 public final class ReportCommand {
 
 	private static final Set<String> SWITCHES = Set.of("--fail-on-error");
-	private static final Set<String> OPTIONS = Set.of("--reports-dir", "--out", "--title");
+	private static final Set<String> OPTIONS = Set.of("--reports-dir", "--out", "--title", "--config");
 
 	private ReportCommand() {
 	}
@@ -45,9 +46,20 @@ public final class ReportCommand {
 			return Pa11yCli.EXIT_USAGE;
 		}
 
-		Path directory = Pa11yCli.reportsDirectory(command);
 		Path output = Path.of(command.value("--out", "accessibility-report.html"));
 		String title = command.value("--title", "Accessibility report");
+
+		// Read here too, so that the step which consolidates a run looks in the same place the
+		// scans wrote to without being told twice.
+		Path directory;
+		try {
+			directory = Pa11yCli.reportsDirectory(command, Pa11yCli.configFor(command));
+		} catch (Pa11yException e) {
+			// Exits 2 rather than 3, and the same from every command: a config file that
+			// cannot be understood is a wrong input, not a step that could not be carried out.
+			err.println(e.getMessage());
+			return Pa11yCli.EXIT_USAGE;
+		}
 
 		List<PageReport> pages;
 		try {
@@ -79,13 +91,24 @@ public final class ReportCommand {
 		out.println(written.toAbsolutePath());
 		err.printf("%d page(s), %d error(s), %d warning(s). %d rule(s) on more than one page, "
 						+ "%d on a single page.%n",
-				pages.size(),
+				combined.completedPages().size(),
 				combined.total(IssueType.ERROR),
 				combined.total(IssueType.WARNING),
 				combined.shared().size(),
 				combined.unique().size());
 
-		return command.has("--fail-on-error") && combined.total(IssueType.ERROR) > 0
+		// Said separately and after the totals, because the totals do not include these pages
+		// and a reader who takes "0 error(s)" at face value has been misled.
+		if (!combined.failedPages().isEmpty()) {
+			err.printf("%d scan(s) did not run and are not in those totals: %s.%n",
+					combined.failedPages().size(),
+					combined.failedPages().stream().map(PageReport::name).collect(Collectors.joining(", ")));
+		}
+
+		// A page that was never measured counts as something to fail on. The flag means "fail
+		// the build if the accessibility step found a problem", and not knowing is a problem.
+		boolean failWorthy = combined.total(IssueType.ERROR) > 0 || !combined.failedPages().isEmpty();
+		return command.has("--fail-on-error") && failWorthy
 				? Pa11yCli.EXIT_ERRORS_FOUND
 				: Pa11yCli.EXIT_CLEAN;
 	}
@@ -106,10 +129,14 @@ public final class ReportCommand {
 
 				Options:
 				  --out <file>             Where to write. Default 'accessibility-report.html'.
-				  --reports-dir <dir>      Where the saved pages are. Default 'pa11y-reports', or the
-				                           PA11Y_REPORTS_DIR environment variable.
+				  --reports-dir <dir>      Where the saved pages are. Default ~/target/pa11yReports,
+				                           the PA11Y_REPORTS_DIR environment variable, or the
+				                           reportsDir in pa11yConfig.json.
+				  --config <file>          Read defaults from this file, instead of looking for a
+				                           pa11yConfig.json in the working directory and above.
 				  --title <title>          Heading for the report. Default 'Accessibility report'.
-				  --fail-on-error          Exit 1 if any page has errors, for failing a build.
+				  --fail-on-error          Exit 1 if any page has errors, or if any scan did not run
+				                           at all, for failing a build.
 
 				Exits 3 if there are no saved pages to combine, since that means the scans did not
 				run rather than that the site is clean.""";

@@ -32,4 +32,27 @@ public enum Standard {
 	public String wireName() {
 		return wireName;
 	}
+
+	/**
+	 * Looks a standard up by name, case-insensitively.
+	 *
+	 * <p>Strict, unlike {@link IssueType#fromWireName(String)}. A standard is typed by a
+	 * person, on a command line or in a config file, and a misspelling that quietly became
+	 * WCAG2AA would mean a run that did not test what it was asked to.
+	 *
+	 * @param wireName the name to look up
+	 * @return the matching standard
+	 * @throws IllegalArgumentException if nothing matches
+	 */
+	public static Standard fromWireName(String wireName) {
+		if (wireName != null) {
+			for (Standard candidate : values()) {
+				if (candidate.wireName.equalsIgnoreCase(wireName.trim())) {
+					return candidate;
+				}
+			}
+		}
+		throw new IllegalArgumentException(
+				"Unknown standard '" + wireName + "'. Use WCAG2A, WCAG2AA or WCAG2AAA.");
+	}
 }

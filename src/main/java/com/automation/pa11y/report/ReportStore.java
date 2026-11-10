@@ -10,9 +10,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -35,8 +38,14 @@ public final class ReportStore {
 	/** Written into every file, and required to read one back. */
 	public static final String GENERATOR = "pa11y-runner";
 
-	/** Bumped only if the shape changes in a way older readers cannot cope with. */
-	public static final int SCHEMA_VERSION = 1;
+	/**
+	 * Bumped only if the shape changes in a way older readers cannot cope with.
+	 *
+	 * <p>2 added {@code status}, and {@code failureKind} and {@code failureMessage} with it.
+	 * A version 1 file reads back as a completed scan, which is what it is: failures were not
+	 * written at all before this.
+	 */
+	public static final int SCHEMA_VERSION = 2;
 
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -66,12 +75,39 @@ public final class ReportStore {
 		Path file = directory.resolve(fileName(report.name()));
 		try {
 			Files.createDirectories(directory);
-			Files.writeString(file, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(toJson(report)),
-					StandardCharsets.UTF_8);
+			writeAtomically(file, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(toJson(report)));
 		} catch (IOException e) {
 			throw new Pa11yException("Could not write the report to " + file + ".", e);
 		}
 		return file;
+	}
+
+	/**
+	 * Writes to a temporary file in the same directory and renames it over the target.
+	 *
+	 * <p>A reader of this directory is either the report step or a person, and both can turn
+	 * up while a suite is still scanning. Writing in place leaves a window where the file is
+	 * half a JSON document, which reads as a corrupt report rather than as a scan in progress.
+	 * The rename is the only part anyone else observes.
+	 *
+	 * @param file     the file to end up with
+	 * @param contents what to put in it
+	 * @throws IOException if the write or the rename fails
+	 */
+	static void writeAtomically(Path file, String contents) throws IOException {
+		Path partial = file.resolveSibling(file.getFileName() + ".partial");
+		try {
+			Files.writeString(partial, contents, StandardCharsets.UTF_8);
+			try {
+				Files.move(partial, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+			} catch (AtomicMoveNotSupportedException e) {
+				// Some network and container filesystems cannot promise it. A plain replace is
+				// still far better than writing the target in place.
+				Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} finally {
+			Files.deleteIfExists(partial);
+		}
 	}
 
 	/**
@@ -95,21 +131,35 @@ public final class ReportStore {
 	 * Deletes saved reports.
 	 *
 	 * @param everything {@code true} to delete every {@code .json} in the directory,
-	 *                   {@code false} to delete only files this tool wrote
+	 *                   {@code false} to delete only reports this tool wrote. Matching HTML
+	 *                   reports are removed with their JSON records.
 	 * @return what was deleted and what was left alone
 	 */
 	public CleanResult clean(boolean everything) {
+		refuseDangerousDirectory();
+
 		List<Path> deleted = new ArrayList<>();
 		List<Path> kept = new ArrayList<>();
 
 		for (Path file : jsonFiles()) {
-			if (!everything && readIfReport(file) == null) {
+			JsonNode report = readIfReport(file);
+			if (!everything && report == null) {
 				kept.add(file);
 				continue;
 			}
 			try {
 				Files.delete(file);
 				deleted.add(file);
+				if (report != null) {
+					Path html = directory.resolve(file.getFileName().toString().replaceFirst("\\.json$", ".html"));
+					try {
+						if (Files.deleteIfExists(html)) {
+							deleted.add(html);
+						}
+					} catch (IOException e) {
+						throw new Pa11yException("Could not delete " + html + ".", e);
+					}
+				}
 			} catch (IOException e) {
 				throw new Pa11yException("Could not delete " + file + ".", e);
 			}
@@ -124,7 +174,10 @@ public final class ReportStore {
 		List<Path> files = new ArrayList<>();
 		try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory, "*.json")) {
 			for (Path entry : entries) {
-				if (Files.isRegularFile(entry)) {
+				// NOFOLLOW_LINKS: a symlink in here points at a file somewhere else, and
+				// deleting what it aims at would be deleting outside this directory. The link
+				// is not a report this tool wrote, so it is simply not a candidate.
+				if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
 					files.add(entry);
 				}
 			}
@@ -133,6 +186,32 @@ public final class ReportStore {
 		}
 		files.sort(Comparator.comparing(path -> path.getFileName().toString()));
 		return files;
+	}
+
+	/**
+	 * Refuses a directory that would be catastrophic to empty.
+	 *
+	 * <p>{@code clean} only ever deletes {@code *.json} and their matching {@code *.html} in
+	 * one directory, never recursively, so the blast radius is small by construction. This is
+	 * the second belt: the directory arrives from a command line, an environment variable or a
+	 * config file, and any of those can be empty or half-substituted. A filesystem root or a
+	 * home directory is never where reports go, and emptying one is not recoverable.
+	 *
+	 * @throws Pa11yException if the directory is a filesystem root or the user's home directory
+	 */
+	void refuseDangerousDirectory() {
+		Path absolute = directory.toAbsolutePath().normalize();
+		if (absolute.getParent() == null) {
+			throw new Pa11yException("Refusing to clean " + absolute
+					+ ", which is a filesystem root. Point --reports-dir, PA11Y_REPORTS_DIR or the"
+					+ " reportsDir in the config file at a directory of its own.");
+		}
+		Path home = Path.of(System.getProperty("user.home", "")).toAbsolutePath().normalize();
+		if (absolute.equals(home)) {
+			throw new Pa11yException("Refusing to clean " + absolute
+					+ ", which is your home directory. Point --reports-dir, PA11Y_REPORTS_DIR or the"
+					+ " reportsDir in the config file at a directory of its own.");
+		}
 	}
 
 	private static JsonNode readIfReport(Path file) {
@@ -160,6 +239,14 @@ public final class ReportStore {
 	}
 
 	/**
+	 * @param name the name the page was scanned under
+	 * @return the HTML report file name
+	 */
+	public static String htmlFileName(String name) {
+		return slug(name) + ".html";
+	}
+
+	/**
 	 * @param value any text
 	 * @return a lowercase, hyphenated form safe to use as a file name
 	 */
@@ -181,6 +268,11 @@ public final class ReportStore {
 		root.put("scannedAt", report.scannedAt().toString());
 		root.put("durationMillis", report.duration().toMillis());
 		root.put("standard", report.standard());
+		root.put("status", report.status().wireName());
+		if (report.isFailed()) {
+			root.put("failureKind", report.failureKind());
+			root.put("failureMessage", report.failureMessage());
+		}
 
 		ArrayNode engines = root.putArray("engines");
 		report.engines().forEach(engines::add);
@@ -227,6 +319,11 @@ public final class ReportStore {
 		}
 
 		String fallbackName = file.getFileName().toString().replaceFirst("\\.json$", "");
+		// A file with no status was written before statuses existed, and only completed scans
+		// were ever written then, so the absence is not ambiguous.
+		ScanStatus status = ScanStatus.fromWireName(root.hasNonNull("status")
+				? root.get("status").asText()
+				: null);
 		return new PageReport(
 				root.hasNonNull("name") ? root.get("name").asText() : fallbackName,
 				text(root, "requestedUrl"),
@@ -236,7 +333,10 @@ public final class ReportStore {
 				Duration.ofMillis(root.path("durationMillis").asLong(0)),
 				text(root, "standard"),
 				engines,
-				issues);
+				issues,
+				status,
+				status == ScanStatus.FAILED ? text(root, "failureKind") : null,
+				status == ScanStatus.FAILED ? text(root, "failureMessage") : null);
 	}
 
 	private static String text(JsonNode node, String field) {

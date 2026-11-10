@@ -1,5 +1,6 @@
 package com.automation.pa11y.internal;
 
+import com.automation.pa11y.Pa11yConfig;
 import com.automation.pa11y.Pa11yException;
 
 import java.nio.file.Files;
@@ -41,7 +42,19 @@ public final class ScannerLocation {
 	 * @throws Pa11yException if no installed scanner can be found
 	 */
 	public static Path discoverModulesDir(Path configured) {
-		Configured explicit = explicitlyConfigured(configured);
+		return discoverModulesDir(configured, null);
+	}
+
+	/**
+	 * @param configured     the directory set on the builder, or {@code null}
+	 * @param fromConfigFile the {@code scannerDir} from {@code pa11yConfig.json}, or {@code null}.
+	 *                       Consulted last, so a property or variable set for one run still wins
+	 *                       over what the project has written down.
+	 * @return the {@code node_modules} directory containing Pa11y
+	 * @throws Pa11yException if no installed scanner can be found
+	 */
+	public static Path discoverModulesDir(Path configured, Path fromConfigFile) {
+		Configured explicit = explicitlyConfigured(configured, fromConfigFile);
 		if (explicit != null) {
 			Path modules = modulesWithin(explicit.directory());
 			if (modules == null) {
@@ -52,7 +65,7 @@ public final class ScannerLocation {
 		return search();
 	}
 
-	private static Configured explicitlyConfigured(Path configured) {
+	private static Configured explicitlyConfigured(Path configured, Path fromConfigFile) {
 		if (configured != null) {
 			return new Configured("Pa11yRunner.builder().scannerDirectory(...)", configured);
 		}
@@ -63,6 +76,9 @@ public final class ScannerLocation {
 		String environment = System.getenv(SCANNER_DIR_ENV);
 		if (environment != null && !environment.isBlank()) {
 			return new Configured("the " + SCANNER_DIR_ENV + " environment variable", Path.of(environment.trim()));
+		}
+		if (fromConfigFile != null) {
+			return new Configured("scannerDir in " + Pa11yConfig.FILE_NAME, fromConfigFile);
 		}
 		return null;
 	}

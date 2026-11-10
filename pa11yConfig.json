@@ -1,0 +1,34 @@
+{
+  "_about": "Accessibility policy for this project. Read by pa11y-runner from the base directory: this file's own folder, or any of the first five folders above the working directory. Flags and environment variables override anything here. Keys starting with an underscore are notes and are ignored.",
+
+  "_paths": "Relative paths resolve against this file, not the working directory, so they mean the same place whichever module a suite is started from.",
+  "reportsDir": "target/pa11yReports",
+  "scannerDir": "scanner",
+  "combinedReportName": "combined-report.html",
+
+  "_standard": "WCAG2A, WCAG2AA or WCAG2AAA. Pa11y treats it as an upper bound and reports everything at or below it.",
+  "standard": "WCAG2AA",
+
+  "_severities": "Errors only. Warnings and notices are advisory and a suite that fails on them fails constantly.",
+  "includeWarnings": false,
+  "includeNotices": false,
+
+  "_timing": "timeout is seconds for the whole scan; wait is milliseconds to pause before inspecting, for content that arrives after an XHR.",
+  "timeout": 60,
+  "wait": 0,
+
+  "_ignore": "Native HTML CodeSniffer rule codes, applied exactly as written. Each one is a decision someone made, so say who and why.",
+  "ignore": [
+    "WCAG2AA.Principle3.Guideline3_1.3_1_1.H57.2"
+  ],
+  "_ignore_H57_2": "Supplied by the application owner. H57.2 is the lang attribute check on the html element; accepted as known rather than fixed per page.",
+
+  "_actions": "Pa11y actions run before every scan, in order. A cookie banner the whole application shows belongs here; a step only one page needs belongs on that scan.",
+  "actions": [],
+
+  "_scope": "Add rootElement to confine scans to one part of the page, and hideElements to exclude a third-party widget. Both are left out here, so the whole page is measured.",
+
+  "_chrome": "Deliberately absent. Chrome's debugger URL contains the Selenium session id, so it is different for every run and cannot be a stored default. Pass it per scan with --chrome, PA11Y_CHROME_URL, or Pa11yRunner.builder().chromeDebuggerUrl(...).",
+
+  "debug": false
+}

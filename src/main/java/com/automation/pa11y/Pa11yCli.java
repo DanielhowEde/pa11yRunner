@@ -40,7 +40,8 @@ public final class Pa11yCli {
 	public static final int EXIT_SCAN_FAILED = 3;
 
 	/** Where reports go when nothing says otherwise. */
-	public static final String DEFAULT_REPORTS_DIR = "pa11y-reports";
+	public static final String DEFAULT_REPORTS_DIR =
+			Path.of(System.getProperty("user.home"), "target", "pa11yReports").toString();
 
 	/** Environment variable naming the reports directory. */
 	public static final String REPORTS_DIR_ENV = "PA11Y_REPORTS_DIR";
@@ -84,21 +85,49 @@ public final class Pa11yCli {
 	/**
 	 * Works out where the per-page files live.
 	 *
+	 * <p>Flag, then property, then environment variable, then the config file, then the
+	 * built-in default. Every step of that ladder is something someone set deliberately, in
+	 * descending order of how specific it is to this one run.
+	 *
 	 * @param command the parsed command line
+	 * @param config  the config file for this run, or {@link Pa11yConfig#empty()}
 	 * @return the reports directory
 	 */
-	public static Path reportsDirectory(CommandLine command) {
-		String configured = command.value("--reports-dir", null);
-		if (configured == null || configured.isBlank()) {
-			configured = System.getProperty(REPORTS_DIR_PROPERTY);
-		}
+	public static Path reportsDirectory(CommandLine command, Pa11yConfig config) {
+		String fromFlag = command.value("--reports-dir", null);
+		return fromFlag == null || fromFlag.isBlank() ? reportsDirectory(config) : Path.of(fromFlag);
+	}
+
+	/**
+	 * The same ladder without a command line, for a caller using the library directly.
+	 *
+	 * @param config the config file for this run, or {@link Pa11yConfig#empty()}
+	 * @return the reports directory
+	 */
+	public static Path reportsDirectory(Pa11yConfig config) {
+		String configured = System.getProperty(REPORTS_DIR_PROPERTY);
 		if (configured == null || configured.isBlank()) {
 			configured = System.getenv(REPORTS_DIR_ENV);
 		}
 		if (configured == null || configured.isBlank()) {
+			if (config != null && config.reportsDir() != null) {
+				return config.reportsDir();
+			}
 			configured = DEFAULT_REPORTS_DIR;
 		}
 		return Path.of(configured);
+	}
+
+	/**
+	 * Reads the config file for a command, if there is one.
+	 *
+	 * @param command the parsed command line
+	 * @return the config, or {@link Pa11yConfig#empty()} if no file was found
+	 * @throws Pa11yException if a named file is missing, or a file was found and cannot be read
+	 */
+	public static Pa11yConfig configFor(CommandLine command) {
+		String named = command.value("--config", null);
+		return Pa11yConfig.discover(named == null || named.isBlank() ? null : Path.of(named));
 	}
 
 	private static int help(String[] args, PrintStream out) {
@@ -130,26 +159,32 @@ public final class Pa11yCli {
 				your test navigated to, signed in and in the state the test left it.
 
 				Commands:
-				  clean     Empty the reports directory. Run once, before the suite starts.
-				  scan      Scan the page Chrome has open and save it. Run after each page.
-				  report    Combine the saved pages into one HTML report. Run once, at the end.
+				  scan      Scan the page Chrome has open and save a per-page HTML report.
+				  clean     Remove reports from a previous run.
+				  report    Optionally combine saved pages into one HTML report.
 
 				A typical run:
 
-				  pa11y-runner clean --reports-dir pa11y-reports
-
 				  # from your test, once it has navigated:
-				  pa11y-runner scan --chrome grid-node-3:9222 --name checkout \\
-				                    --reports-dir pa11y-reports
+				  pa11y-runner scan --chrome "ws://grid:4444/session/${SESSION_ID}/se/cdp" \\
+				                    --name checkout
 
-				  pa11y-runner report --reports-dir pa11y-reports --out accessibility-report.html
+				The scan writes ~/target/pa11yReports/checkout.html by default. Use --reports-dir
+				or PA11Y_REPORTS_DIR to change the output directory.
 
 				Settings can come from the environment instead of the command line, which is usually
 				easier in CI:
 
-				  PA11Y_CHROME_URL       Chrome's debugger, e.g. http://grid-node-3:9222
-				  PA11Y_REPORTS_DIR      Where the per-page files go
+				  PA11Y_CHROME_URL       Selenium Grid CDP WebSocket for the session being tested
+				  PA11Y_REPORTS_DIR      Where per-page reports go (default ~/target/pa11yReports)
 				  PA11Y_SCANNER_DIR      Directory holding the scanner's node_modules
+				  PA11Y_CONFIG_FILE      The pa11yConfig.json to read, instead of searching for one
+
+				A pa11yConfig.json in the base directory -- the working directory or one of its
+				first five ancestors -- supplies the defaults for a whole project: the standard, the
+				root element, the rules already accepted as known. Flags override it. Chrome's
+				debugger URL is deliberately not one of its keys: it contains the session id, so it
+				is different for every run and has to be passed per scan.
 
 				Exit codes:
 				  0  the command did what was asked

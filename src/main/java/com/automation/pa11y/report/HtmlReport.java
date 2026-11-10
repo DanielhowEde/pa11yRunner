@@ -78,6 +78,9 @@ public final class HtmlReport {
 		appendHeader(html, report, title);
 		html.append("<main id=\"main\">\n");
 		appendSummary(html, report);
+		// Before the findings, deliberately. A reader who stops after the summary still has to
+		// have seen that some of these pages were never measured.
+		appendFailures(html, report);
 		appendShared(html, report);
 		appendUnique(html, report);
 		appendPages(html, report);
@@ -108,7 +111,10 @@ public final class HtmlReport {
 		html.append("<section aria-labelledby=\"summary-heading\">\n")
 				.append("<h2 id=\"summary-heading\">Summary</h2>\n<ul class=\"tiles\">\n");
 
-		tile(html, report.pages().size(), "pages scanned", null);
+		tile(html, report.completedPages().size(), "pages scanned", null);
+		if (!report.failedPages().isEmpty()) {
+			tile(html, report.failedPages().size(), "scans that failed", "error");
+		}
 		tile(html, report.total(IssueType.ERROR), "errors", "error");
 		tile(html, report.total(IssueType.WARNING), "warnings", "warning");
 		tile(html, report.shared().size(), "rules on more than one page", null);
@@ -116,10 +122,44 @@ public final class HtmlReport {
 
 		html.append("</ul>\n");
 
-		if (report.totalIssues() == 0 && !report.pages().isEmpty()) {
+		// Only when every page was actually measured. Saying this with a failed scan in the
+		// run would be the single most misleading sentence the report could contain.
+		if (report.isClean()) {
 			html.append("<p class=\"clean\">No issues were found on any page scanned.</p>\n");
 		}
 		html.append("</section>\n");
+	}
+
+	/**
+	 * The pages that were never measured, and why.
+	 *
+	 * <p>Rendered as a failure rather than as an absence. A page missing from a report is
+	 * something nobody notices; a page listed as not scanned is something somebody fixes.
+	 */
+	private static void appendFailures(StringBuilder html, CombinedReport report) {
+		List<PageReport> failed = report.failedPages();
+		if (failed.isEmpty()) {
+			return;
+		}
+
+		html.append("<section class=\"failures\" aria-labelledby=\"failures-heading\">\n")
+				.append("<h2 id=\"failures-heading\">Scans that did not run</h2>\n")
+				.append("<p class=\"note\">These pages were <strong>not measured</strong>. ")
+				.append("They are not clean and they are not failing; nothing is known about them. ")
+				.append("Fix the scan and run again before reading anything into the totals above.</p>\n")
+				.append("<table>\n<caption>Pages with no result</caption>\n<thead>\n<tr>")
+				.append("<th scope=\"col\">Page</th>")
+				.append("<th scope=\"col\">Problem</th>")
+				.append("<th scope=\"col\">Detail</th>")
+				.append("</tr>\n</thead>\n<tbody>\n");
+
+		for (PageReport page : failed) {
+			html.append("<tr><th scope=\"row\">").append(escape(page.name())).append("</th>")
+					.append("<td><code>").append(escape(page.failureKind())).append("</code></td>")
+					.append("<td>").append(escape(page.failureMessage())).append("</td></tr>\n");
+		}
+
+		html.append("</tbody>\n</table>\n</section>\n");
 	}
 
 	private static void tile(StringBuilder html, long value, String label, String variant) {
@@ -325,6 +365,9 @@ public final class HtmlReport {
 				.meta, .note { color:var(--muted); margin:0 0 8px; }
 				.note { max-width:58rem; }
 				.clean { color:var(--muted); font-weight:600; }
+				.failures { background:var(--error-bg); border:1px solid var(--error); border-radius:10px; padding:4px 16px 16px; margin-top:32px; }
+				.failures h2 { margin-top:16px; }
+				.failures .note { color:var(--text); }
 				a { color:var(--accent); }
 				:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
 

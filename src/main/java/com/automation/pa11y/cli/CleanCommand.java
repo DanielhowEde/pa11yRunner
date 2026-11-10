@@ -15,14 +15,15 @@ import java.util.Set;
  * last week would be silently folded in, and a page that has since been deleted would keep
  * showing up as a failure.
  *
- * <p>Only files this tool wrote are removed. A reports directory is exactly the sort of place
- * someone also keeps a config file or a fixture, and deleting every {@code .json} in a
- * directory named on the command line is not a thing to do by default.
+ * <p>Only reports this tool wrote are removed by default, including their HTML output. A
+ * reports directory is exactly the sort of place someone also keeps a config file or a
+ * fixture, and deleting every {@code .json} in a directory named on the command line is not
+ * a thing to do by default.
  */
 public final class CleanCommand {
 
 	private static final Set<String> SWITCHES = Set.of("--all", "--quiet");
-	private static final Set<String> OPTIONS = Set.of("--reports-dir");
+	private static final Set<String> OPTIONS = Set.of("--reports-dir", "--config");
 
 	private CleanCommand() {
 	}
@@ -44,7 +45,18 @@ public final class CleanCommand {
 			return Pa11yCli.EXIT_USAGE;
 		}
 
-		Path directory = Pa11yCli.reportsDirectory(command);
+		// Read here too, so that a project whose reportsDir lives in the config file does not
+		// have to repeat it on the step that empties that very directory.
+		Path directory;
+		try {
+			directory = Pa11yCli.reportsDirectory(command, Pa11yCli.configFor(command));
+		} catch (Pa11yException e) {
+			// Exits 2 rather than 3, and the same from every command: a config file that
+			// cannot be understood is a wrong input, not a step that could not be carried out.
+			err.println(e.getMessage());
+			return Pa11yCli.EXIT_USAGE;
+		}
+
 		ReportStore.CleanResult result;
 		try {
 			result = new ReportStore(directory).clean(command.has("--all"));
@@ -54,7 +66,7 @@ public final class CleanCommand {
 		}
 
 		if (!command.has("--quiet")) {
-			out.printf("Removed %d report(s) from %s%n", result.deleted().size(), directory.toAbsolutePath());
+			out.printf("Removed %d output file(s) from %s%n", result.deleted().size(), directory.toAbsolutePath());
 			if (!result.kept().isEmpty()) {
 				err.printf("Left %d other .json file(s) alone; pass --all to remove those too.%n",
 						result.kept().size());
@@ -74,8 +86,11 @@ public final class CleanCommand {
 				  pa11y-runner clean [--reports-dir <dir>] [--all]
 
 				Options:
-				  --reports-dir <dir>      Which directory to clear. Default 'pa11y-reports', or the
-				                           PA11Y_REPORTS_DIR environment variable.
+				  --reports-dir <dir>      Which directory to clear. Default ~/target/pa11yReports,
+				                           the PA11Y_REPORTS_DIR environment variable, or the
+				                           reportsDir in pa11yConfig.json.
+				  --config <file>          Read defaults from this file, instead of looking for a
+				                           pa11yConfig.json in the working directory and above.
 				  --all                    Delete every .json in the directory, not just the report
 				                           files this tool wrote.
 				  --quiet                  Say nothing on success.

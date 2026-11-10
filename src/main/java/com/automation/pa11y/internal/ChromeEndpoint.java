@@ -51,8 +51,8 @@ public final class ChromeEndpoint {
 	 *
 	 * @param chromeUrl either a DevTools HTTP endpoint ({@code http://grid-node-3:9222},
 	 *                  {@code grid-node-3:9222} or {@code 10.0.4.7}) or an already-known
-	 *                  WebSocket URL ({@code ws://...}), such as Selenium's {@code se:cdp}
-	 *                  capability, which is passed through untouched
+	 *                  WebSocket URL ({@code ws://...}), such as Selenium Grid's
+	 *                  {@code /session/<id>/se/cdp} endpoint, which is passed through untouched
 	 * @param timeout   how long to allow for the lookup
 	 * @return the WebSocket URL to hand to Puppeteer
 	 * @throws Pa11yException if Chrome cannot be reached or gives no debugger URL
