@@ -102,10 +102,63 @@ class ReportStoreTest {
 	@Test
 	@DisplayName("cleaning a directory that does not exist is not an error, so it is safe as step one")
 	void cleaningNothingIsFine(@TempDir Path temp) {
-		ReportStore.CleanResult result = new ReportStore(temp.resolve("never-created")).clean(false);
+		Path missing = temp.resolve("never-created");
+
+		ReportStore.CleanResult result = new ReportStore(missing).clean(false);
 
 		assertTrue(result.deleted().isEmpty());
 		assertTrue(result.kept().isEmpty());
+		// Left behind for the scans that follow, which is the whole reason clean runs first.
+		assertTrue(Files.isDirectory(missing), "clean must leave the reports directory in place");
+	}
+
+	@Test
+	@DisplayName("the reports directory is made when it is missing, parents and all")
+	void ensureDirectoryCreatesTheWholePath(@TempDir Path temp) {
+		Path reports = temp.resolve("target").resolve("pa11yReports");
+
+		Path returned = new ReportStore(reports).ensureDirectory();
+
+		assertEquals(reports, returned);
+		assertTrue(Files.isDirectory(reports));
+	}
+
+	@Test
+	@DisplayName("a directory that is already there is left alone rather than being an error")
+	void ensureDirectoryIsIdempotent(@TempDir Path temp) throws IOException {
+		ReportStore store = new ReportStore(temp.resolve("reports"));
+		store.ensureDirectory();
+		Path existing = Files.writeString(store.directory().resolve("keep.json"), "{}",
+				StandardCharsets.UTF_8);
+
+		store.ensureDirectory();
+		store.ensureDirectory();
+
+		assertTrue(Files.isDirectory(store.directory()));
+		assertTrue(Files.exists(existing), "an existing directory must not be emptied or replaced");
+	}
+
+	@Test
+	@DisplayName("writing creates the reports directory, so a first scan needs no setup")
+	void writeCreatesTheReportsDirectory(@TempDir Path temp) {
+		ReportStore store = new ReportStore(temp.resolve("target").resolve("pa11yReports"));
+
+		Path written = store.write(page("checkout"));
+
+		assertTrue(Files.isRegularFile(written));
+		assertEquals(1, store.readAll().size());
+	}
+
+	@Test
+	@DisplayName("a file sitting where the reports directory should be is reported, not worked around")
+	void ensureDirectoryRefusesAFileInItsPlace(@TempDir Path temp) throws IOException {
+		Path inTheWay = Files.writeString(temp.resolve("pa11yReports"), "not a directory",
+				StandardCharsets.UTF_8);
+
+		Pa11yException thrown = assertThrows(Pa11yException.class,
+				() -> new ReportStore(inTheWay).ensureDirectory());
+
+		assertTrue(thrown.getMessage().contains("not a directory"), thrown.getMessage());
 	}
 
 	@Test

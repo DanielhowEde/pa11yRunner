@@ -15,6 +15,9 @@ import java.util.Set;
  * last week would be silently folded in, and a page that has since been deleted would keep
  * showing up as a failure.
  *
+ * <p>A reports directory that does not exist yet is made rather than refused: there is
+ * nothing to clean, and the scans that follow need the directory anyway.
+ *
  * <p>Only reports this tool wrote are removed by default, including their HTML output. A
  * reports directory is exactly the sort of place someone also keeps a config file or a
  * fixture, and deleting every {@code .json} in a directory named on the command line is not
@@ -95,7 +98,7 @@ public final class CleanCommand {
 				                           files this tool wrote.
 				  --quiet                  Say nothing on success.
 
-				Exits 0 even when there was nothing to delete, so it is safe as the first step of
-				every run.""";
+				The directory is created if it is not there yet, and exits 0 even when there was
+				nothing to delete, so it is safe as the first step of every run.""";
 	}
 }

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -66,6 +67,42 @@ public final class ReportStore {
 	}
 
 	/**
+	 * Creates the reports directory if it is not there yet.
+	 *
+	 * <p>Idempotent, and a directory that is already there is not an error. Writing a report
+	 * and cleaning both call this rather than expecting the directory to have been made by
+	 * hand, so a fresh checkout -- or a {@code target} a build has just wiped -- is not a
+	 * reason for a run to fail. Parents are created too, so a {@code reportsDir} of
+	 * {@code target/pa11yReports} works when {@code target} does not exist either.
+	 *
+	 * <p>Reading does not call it: {@link #readAll()} already treats a directory that is not
+	 * there as no reports, and a read has no business leaving a directory behind.
+	 *
+	 * @return the directory
+	 * @throws Pa11yException if it cannot be created, or something that is not a directory is
+	 *                        already in its place
+	 */
+	public Path ensureDirectory() {
+		if (Files.isDirectory(directory)) {
+			return directory;
+		}
+		try {
+			Files.createDirectories(directory);
+		} catch (FileAlreadyExistsException e) {
+			// A file sitting where the reports directory should be is a misconfiguration, and
+			// saying so once beats every later write failing a page at a time.
+			throw new Pa11yException("Cannot use " + directory.toAbsolutePath()
+					+ " for reports: something that is not a directory is already there. Point"
+					+ " --reports-dir, PA11Y_REPORTS_DIR or the reportsDir in the config file"
+					+ " somewhere else.", e);
+		} catch (IOException e) {
+			throw new Pa11yException("Could not create the reports directory "
+					+ directory.toAbsolutePath() + ".", e);
+		}
+		return directory;
+	}
+
+	/**
 	 * Saves one page, overwriting any previous scan of the same name.
 	 *
 	 * @param report the page to save
@@ -73,8 +110,8 @@ public final class ReportStore {
 	 */
 	public Path write(PageReport report) {
 		Path file = directory.resolve(fileName(report.name()));
+		ensureDirectory();
 		try {
-			Files.createDirectories(directory);
 			writeAtomically(file, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(toJson(report)));
 		} catch (IOException e) {
 			throw new Pa11yException("Could not write the report to " + file + ".", e);
@@ -130,6 +167,9 @@ public final class ReportStore {
 	/**
 	 * Deletes saved reports.
 	 *
+	 * <p>The directory is created if it is not there yet, so this is safe as the first step of
+	 * every run, on a machine where nothing has written a report before.
+	 *
 	 * @param everything {@code true} to delete every {@code .json} in the directory,
 	 *                   {@code false} to delete only reports this tool wrote. Matching HTML
 	 *                   reports are removed with their JSON records.
@@ -137,6 +177,10 @@ public final class ReportStore {
 	 */
 	public CleanResult clean(boolean everything) {
 		refuseDangerousDirectory();
+		// Created rather than merely tolerated: clean is the first step of a run, so leaving
+		// the directory behind means the scans that follow, and anyone watching the folder,
+		// find it where it is meant to be. Nothing to clean is not a failure.
+		ensureDirectory();
 
 		List<Path> deleted = new ArrayList<>();
 		List<Path> kept = new ArrayList<>();

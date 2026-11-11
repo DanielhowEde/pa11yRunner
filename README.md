@@ -79,7 +79,7 @@ With those set, the scan is just `... scan --name checkout`.
 | Command | What it does |
 |---|---|
 | `scan` | Writes `<name>.html` plus a JSON record used by the optional combined report. Rescanning a name replaces both files. |
-| `clean` | Removes this tool's saved JSON and matching HTML reports. |
+| `clean` | Removes this tool's saved JSON and matching HTML reports, and creates the reports directory if it is not there yet. |
 | `report` | Optional: combines saved pages into one self-contained HTML report. |
 
 `pa11y-runner help <command>` explains any of them in full.
@@ -264,6 +264,11 @@ looking elsewhere.
 **Relative paths resolve against the file, not the working directory.** `"reportsDir":
 "target/pa11yReports"` means the same place whichever module the suite was started from.
 
+**The reports directory does not have to exist.** `clean`, `scan` and `clearPa11y()` create it,
+parents included, so `target/pa11yReports` works on a fresh checkout and after a build has wiped
+`target`. A directory that is already there is left exactly as it is. Only a *file* sitting at that
+path is an error, since nothing can be written into it.
+
 **Precedence** runs flag → system property → environment variable → config file → built-in default.
 The exception is the three switches `debug`, `includeWarnings` and `includeNotices`: a command line
 switch can only turn something on, so either source saying `true` wins and nothing turns one back
@@ -328,7 +333,8 @@ accident, it fails. And since there is no driver here, nothing can call `driver.
 ### What the three calls guarantee
 
 - **`clearPa11y()`** removes only files this tool wrote, never recurses, does not follow symlinks,
-  and refuses outright to run against a filesystem root or a home directory.
+  and refuses outright to run against a filesystem root or a home directory. It creates the output
+  directory when it is missing, so the first run of a suite needs no setup.
 - **`scanPa11y(chromeUrl, pageName)`** measures the page the browser already has open, in the state
   your test left it. `pageName` must be a plain name — a separator, a drive letter or `..` is
   rejected — and **a repeated name is refused rather than overwriting**, because the symptom of

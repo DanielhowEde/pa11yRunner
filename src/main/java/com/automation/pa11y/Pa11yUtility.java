@@ -125,6 +125,10 @@ public final class Pa11yUtility {
 	 * followed, nothing recurses into subdirectories, and a directory that is a filesystem
 	 * root or a home directory is refused outright.
 	 *
+	 * <p>The output directory is created if it is not there yet, so the first run on a fresh
+	 * checkout, or after a build has wiped {@code target}, has somewhere to write without
+	 * anyone having to make the directory by hand.
+	 *
 	 * <p>Call once at the start of a suite, not before each page.
 	 *
 	 * @return the files that were deleted

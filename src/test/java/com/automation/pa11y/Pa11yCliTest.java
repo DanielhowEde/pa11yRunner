@@ -207,6 +207,17 @@ class Pa11yCliTest {
 	}
 
 	@Test
+	@DisplayName("clean makes the reports directory when it is missing instead of failing")
+	void cleanCreatesAMissingReportsDirectory(@TempDir Path temp) {
+		Path reports = temp.resolve("target").resolve("pa11yReports");
+
+		int exitCode = run("clean", "--reports-dir", reports.toString());
+
+		assertEquals(Pa11yCli.EXIT_CLEAN, exitCode, errors());
+		assertTrue(Files.isDirectory(reports), "the directory must be there for the scans that follow");
+	}
+
+	@Test
 	@DisplayName("a flag still beats the config file, so one run can be told to do something else")
 	void flagBeatsTheConfigFile(@TempDir Path temp) throws IOException {
 		Path config = temp.resolve(Pa11yConfig.FILE_NAME);
